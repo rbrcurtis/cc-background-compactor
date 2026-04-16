@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# cch — claude wrapper that auto-resumes on SIGHUP.
+#
+# Runs `claude` in a loop. Normal exits propagate. Exit code 129 (sent by CC's
+# SIGHUP handler) triggers a reload: we re-exec with `--continue` so the
+# session reopens against the freshly-compacted JSONL.
+#
+# The cc-background-compactor Stop hook sends SIGHUP to CC after successfully
+# splicing a pending summary, but only when CCH_WRAPPER=1 is set — so plain
+# `claude` never gets killed unexpectedly.
+set -u
+
+args=("$@")
+
+while true; do
+  CCH_WRAPPER=1 claude "${args[@]}"
+  code=$?
+  if [ "$code" -ne 129 ]; then
+    exit "$code"
+  fi
+  printf '\033[2m↻ reloading session…\033[0m\n' >&2
+  args=(--continue)
+done

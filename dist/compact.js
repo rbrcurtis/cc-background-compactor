@@ -529,7 +529,15 @@ async function main() {
     log(`heartbeat sid=${sid} disabled`);
     return;
   }
-  await applyPending(sid, tp);
+  const spliced = await applyPending(sid, tp);
+  if (spliced && process.env.CCH_WRAPPER === "1") {
+    try {
+      process.kill(process.ppid, "SIGHUP");
+      log(`sent SIGHUP to cc (pid=${process.ppid}) for cch auto-reload`);
+    } catch (err) {
+      log(`SIGHUP to cc failed: ${String(err)}`);
+    }
+  }
   await maybeTriggerSummarize(
     sid,
     tp,

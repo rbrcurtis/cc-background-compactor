@@ -16,6 +16,25 @@ Claude Code has a built-in auto-compact that triggers near 95% context fill — 
 
 Because it's event-driven and never blocks the session, you can keep working straight through context filling up.
 
+### The catch: Claude Code caches the conversation in memory
+
+CC reads the JSONL once at session start and never re-reads it. So when the plugin splices a summary into the JSONL mid-session, the running TUI doesn't see it — the context indicator stays at 70%, API calls still send the full pre-splice transcript, and cost doesn't drop. The splice only takes effect on the **next** `--resume`.
+
+For Agent SDK / orcd use, where each turn rebuilds the API payload from the JSONL, mid-session splices work in-flight. For interactive CC, see the `cch` wrapper below.
+
+## `cch` — wrapper for interactive CC
+
+`bin/cch` is a thin bash wrapper that catches exit code 129 (CC's SIGHUP handler exits with that code) and re-execs `claude --continue`. When you set `CCH_WRAPPER=1` (which `cch` does automatically), the Stop hook sends SIGHUP to the CC process after a successful splice. CC exits gracefully, the wrapper catches 129, re-execs with `--continue`, and CC picks up the freshly-compacted JSONL.
+
+From the user's perspective: a brief TUI flash, then back in the same session with reduced context.
+
+Install:
+```
+ln -s ~/Code/cc-background-compactor/bin/cch ~/.local/bin/cch
+```
+
+Then launch `cch` instead of `claude` whenever you want mid-session compaction to actually shrink the running context. Plain `claude` still works — the Stop hook only sends SIGHUP if `CCH_WRAPPER=1` is set, so there's no surprise behavior.
+
 ## Install
 
 ```
