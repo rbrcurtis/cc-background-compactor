@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync } from "node:fs";
 
 mkdirSync("dist", { recursive: true });
 
-const entryPoints = ["src/compact.ts", "src/summarize.ts"];
+const entryPoints = ["src/compact.ts", "src/summarize.ts", "src/probe-window.ts"];
 
 await build({
   entryPoints,

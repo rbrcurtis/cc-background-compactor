@@ -21,7 +21,8 @@ const DEFAULTS: CompactConfig = {
 };
 
 export const CONFIG_DIR = join(homedir(), ".config", "cc-background-compactor");
-export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+export const CONFIG_PATH =
+  process.env.CC_BACKGROUND_COMPACTOR_CONFIG ?? join(CONFIG_DIR, "config.json");
 
 export function loadConfig(): CompactConfig {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };

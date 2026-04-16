@@ -308,7 +308,7 @@ var DEFAULTS = {
   ratio: 0.5
 };
 var CONFIG_DIR = join(homedir(), ".config", "cc-background-compactor");
-var CONFIG_PATH = join(CONFIG_DIR, "config.json");
+var CONFIG_PATH = process.env.CC_BACKGROUND_COMPACTOR_CONFIG ?? join(CONFIG_DIR, "config.json");
 function loadConfig() {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
   try {

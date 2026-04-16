@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { applyCompaction, detectContextUsage } from "./jsonl.ts";
 import { loadConfig } from "./config.ts";
+import { getCachedWindow, spawnProbeDetached } from "./window-cache.ts";
 
 interface StopHookInput {
   session_id?: string;
@@ -106,8 +107,21 @@ async function maybeTriggerSummarize(
   threshold: number,
   contextWindow: number | null,
 ): Promise<void> {
-  const usage = await detectContextUsage(transcript, contextWindow);
+  const usage = await detectContextUsage(
+    transcript,
+    contextWindow,
+    getCachedWindow,
+  );
   if (!usage) return;
+
+  const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
+  if (!contextWindow && !modelCached) {
+    spawnProbeDetached();
+    process.stderr.write(
+      `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background\n`,
+    );
+    return;
+  }
 
   if (usage.fraction < threshold) return;
 

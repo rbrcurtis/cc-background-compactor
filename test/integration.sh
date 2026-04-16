@@ -19,9 +19,22 @@ SUMMARY_FILE="/tmp/cc-compact-summary-${SID}.json"
 LOCK_FILE="/tmp/cc-compact-lock-${SID}"
 
 cleanup() {
-  rm -f "$TRANSCRIPT" "$SUMMARY_FILE" "$LOCK_FILE"
+  rm -f "$TRANSCRIPT" "$SUMMARY_FILE" "$LOCK_FILE" "$CACHE_DIR/model-windows.json.bak"
+  if [ -f "$CACHE_DIR/model-windows.json.bak" ]; then
+    mv "$CACHE_DIR/model-windows.json.bak" "$CACHE_DIR/model-windows.json"
+  fi
 }
 trap cleanup EXIT
+
+CACHE_DIR="$HOME/.config/cc-background-compactor"
+mkdir -p "$CACHE_DIR"
+if [ -f "$CACHE_DIR/model-windows.json" ]; then
+  cp "$CACHE_DIR/model-windows.json" "$CACHE_DIR/model-windows.json.bak"
+fi
+echo '{"claude-sonnet-4-6": {"window": 200000, "probedAt": 0}}' > "$CACHE_DIR/model-windows.json"
+
+export CC_BACKGROUND_COMPACTOR_CONFIG=$(mktemp /tmp/cc-test-config-XXXXXX.json)
+echo '{"enabled":true,"threshold":0.7,"modelOverride":null,"contextWindow":null,"maxExcerptChars":120000,"ratio":0.5}' > "$CC_BACKGROUND_COMPACTOR_CONFIG"
 
 echo "==> session id: $SID"
 echo "==> transcript: $TRANSCRIPT"

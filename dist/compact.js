@@ -3,12 +3,12 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 
 // src/compact.ts
 import { readFile as readFile2, unlink } from "node:fs/promises";
-import { existsSync as existsSync2, openSync, closeSync } from "node:fs";
-import { spawn } from "node:child_process";
-import { join as join2 } from "node:path";
+import { existsSync as existsSync3, openSync, closeSync } from "node:fs";
+import { spawn as spawn2 } from "node:child_process";
+import { join as join3 } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname as dirname2 } from "node:path";
+import { dirname as dirname3 } from "node:path";
 
 // src/jsonl.ts
 import { readFile, writeFile, rename } from "node:fs/promises";
@@ -20,7 +20,7 @@ function windowForModel(model) {
   if (lc.includes("[1m]") || lc.includes("-1m")) return 1e6;
   return DEFAULT_WINDOW;
 }
-async function detectContextUsage(jsonlPath, windowOverride) {
+async function detectContextUsage(jsonlPath, windowOverride, cacheLookup) {
   const { readFile: readFile3 } = await import("node:fs/promises");
   const raw = await readFile3(jsonlPath, "utf-8").catch(() => "");
   if (!raw) return null;
@@ -45,7 +45,13 @@ async function detectContextUsage(jsonlPath, windowOverride) {
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
     const model = typeof msg.model === "string" ? msg.model : null;
-    const window = windowOverride ?? windowForModel(model);
+    let window;
+    if (windowOverride) {
+      window = windowOverride;
+    } else {
+      const cached = cacheLookup && model ? cacheLookup(model) : null;
+      window = cached ?? windowForModel(model);
+    }
     return { tokens, window, fraction: tokens / window, model };
   }
   return null;
@@ -149,7 +155,7 @@ var DEFAULTS = {
   ratio: 0.5
 };
 var CONFIG_DIR = join(homedir(), ".config", "cc-background-compactor");
-var CONFIG_PATH = join(CONFIG_DIR, "config.json");
+var CONFIG_PATH = process.env.CC_BACKGROUND_COMPACTOR_CONFIG ?? join(CONFIG_DIR, "config.json");
 function loadConfig() {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
   try {
@@ -161,12 +167,59 @@ function loadConfig() {
   }
 }
 
+// src/window-cache.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { spawn } from "node:child_process";
+import { homedir as homedir2 } from "node:os";
+import { join as join2, dirname as dirname2 } from "node:path";
+var CACHE_PATH = join2(
+  homedir2(),
+  ".config",
+  "cc-background-compactor",
+  "model-windows.json"
+);
+var PROBE_LOCK = "/tmp/cc-background-compactor-probe.lock";
+function loadCache() {
+  if (!existsSync2(CACHE_PATH)) return {};
+  try {
+    return JSON.parse(readFileSync2(CACHE_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function getCachedWindow(model) {
+  const cache = loadCache();
+  const entry = cache[model];
+  return entry ? entry.window : null;
+}
+function spawnProbeDetached() {
+  if (existsSync2(PROBE_LOCK)) {
+    try {
+      const pid = parseInt(readFileSync2(PROBE_LOCK, "utf8"), 10);
+      if (!Number.isNaN(pid)) {
+        try {
+          process.kill(pid, 0);
+          return;
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  const child = spawn(
+    process.execPath,
+    [new URL("./probe-window.js", import.meta.url).pathname],
+    { detached: true, stdio: "ignore", env: process.env }
+  );
+  child.unref();
+}
+
 // src/compact.ts
 function summaryPath(sid) {
-  return join2(tmpdir(), `cc-compact-summary-${sid}.json`);
+  return join3(tmpdir(), `cc-compact-summary-${sid}.json`);
 }
 function lockPath(sid) {
-  return join2(tmpdir(), `cc-compact-lock-${sid}`);
+  return join3(tmpdir(), `cc-compact-lock-${sid}`);
 }
 async function readStdin() {
   return new Promise((resolve) => {
@@ -189,7 +242,7 @@ async function isPidRunning(pid) {
 }
 async function applyPending(sid, currentTranscript) {
   const sp = summaryPath(sid);
-  if (!existsSync2(sp)) return false;
+  if (!existsSync3(sp)) return false;
   let prepared;
   try {
     prepared = JSON.parse(await readFile2(sp, "utf8"));
@@ -232,22 +285,35 @@ async function applyPending(sid, currentTranscript) {
   return true;
 }
 async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) {
-  const usage = await detectContextUsage(transcript, contextWindow);
+  const usage = await detectContextUsage(
+    transcript,
+    contextWindow,
+    getCachedWindow
+  );
   if (!usage) return;
+  const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
+  if (!contextWindow && !modelCached) {
+    spawnProbeDetached();
+    process.stderr.write(
+      `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background
+`
+    );
+    return;
+  }
   if (usage.fraction < threshold) return;
   const lp = lockPath(sid);
-  if (existsSync2(lp)) {
+  if (existsSync3(lp)) {
     try {
       const pid = parseInt(await readFile2(lp, "utf8"), 10);
       if (!Number.isNaN(pid) && await isPidRunning(pid)) return;
     } catch {
     }
   }
-  if (existsSync2(summaryPath(sid))) return;
-  const here = dirname2(fileURLToPath(import.meta.url));
-  const summarizerPath = join2(here, "summarize.js");
+  if (existsSync3(summaryPath(sid))) return;
+  const here = dirname3(fileURLToPath(import.meta.url));
+  const summarizerPath = join3(here, "summarize.js");
   const outFd = openSync("/tmp/cc-compact-bg.log", "a");
-  const child = spawn(
+  const child = spawn2(
     "node",
     [summarizerPath, "--session-id", sid, "--transcript", transcript],
     {
