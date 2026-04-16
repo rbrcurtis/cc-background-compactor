@@ -7,6 +7,7 @@ export interface CompactConfig {
   threshold: number;
   modelOverride: string | null;
   contextWindow: number | null;
+  modelWindows: Record<string, number>;
   maxExcerptChars: number;
   ratio: number;
 }
@@ -16,6 +17,7 @@ const DEFAULTS: CompactConfig = {
   threshold: 0.7,
   modelOverride: null,
   contextWindow: null,
+  modelWindows: {},
   maxExcerptChars: 120_000,
   ratio: 0.5,
 };

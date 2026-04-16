@@ -35,6 +35,7 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
   "threshold": 0.7,
   "modelOverride": null,
   "contextWindow": null,
+  "modelWindows": {},
   "maxExcerptChars": 120000,
   "ratio": 0.5
 }
@@ -45,9 +46,12 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 | `enabled` | `true` | Kill switch. |
 | `threshold` | `0.7` | Fraction of context fill that triggers summarization (0.7 = 70%). |
 | `modelOverride` | `null` | Pin a specific model for summarization. `null` = detect the parent session's model from the transcript and use the same one. |
-| `contextWindow` | `null` | Fallback context window in tokens for models that aren't in the probed cache yet. `null` = auto-probe the model via `claude -p` and cache the result. Set to `1000000` if you use a 1M-context variant (`claude-opus-4-7[1m]`, `claude-sonnet-4-6[1m]`, etc.) — the JSONL strips the `[1m]` suffix so the probe can't distinguish 1M variants from their 200k base models. **Priority:** probed cache (`~/.config/cc-background-compactor/model-windows.json`) wins over this value, so setting it doesn't mask a known per-model window. Delete the cache entry if you need to re-probe. |
+| `modelWindows` | `{}` | Explicit per-model window overrides, e.g. `{"claude-opus-4-7": 1000000}` if you always run opus on the 1M variant. The JSONL strips the `[1m]` suffix, so the probe can't tell 1M variants from 200k base models — declaring it here is the durable fix. Highest priority; beats the probed cache. |
+| `contextWindow` | `null` | Global fallback window in tokens for models not in `modelWindows` and not yet in the probed cache. `null` = auto-probe the model via `claude -p` and cache the result. |
 | `maxExcerptChars` | `120000` | Cap on characters sent to the summarizer. Keeps the summarization call fast. |
 | `ratio` | `0.5` | Fraction of the conversation to summarize. `0.5` = oldest half. |
+
+**Window resolution priority:** `modelWindows` (your declaration) > probed cache (`~/.config/cc-background-compactor/model-windows.json`) > `contextWindow` (config fallback) > name heuristic (`[1m]`/`-1m` suffix → 1M, else 200k).
 
 ## Requirements
 
@@ -74,8 +78,10 @@ Any in-flight summarization finishes and writes to `/tmp` but is harmless — th
 Every Stop-hook invocation writes a heartbeat line to `/tmp/cc-compact-bg.log`:
 
 ```
-2026-04-16T17:45:00.000Z heartbeat sid=abc-123 model=claude-opus-4-7 tokens=196906 window=200000 fraction=98.5% threshold=70% cached=true cfgWindow=null
+2026-04-16T17:45:00.000Z heartbeat sid=abc-123 model=claude-opus-4-7 tokens=196906 window=1000000 source=modelWindows fraction=19.7% threshold=20%
 ```
+
+`source` tells you which tier resolved the window: `modelWindows`, `cache`, `contextWindow`, or `heuristic`.
 
 `tail -f /tmp/cc-compact-bg.log` to confirm the hook is firing and see why it is/isn't triggering.
 

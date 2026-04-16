@@ -116,27 +116,27 @@ async function maybeTriggerSummarize(
   transcript: string,
   threshold: number,
   contextWindow: number | null,
+  modelWindows: Record<string, number>,
 ): Promise<void> {
-  const usage = await detectContextUsage(
-    transcript,
-    contextWindow,
-    getCachedWindow,
-  );
+  const usage = await detectContextUsage(transcript, {
+    modelWindows,
+    cacheLookup: getCachedWindow,
+    windowOverride: contextWindow,
+  });
   if (!usage) {
     log(`heartbeat sid=${sid} no-usage-yet`);
     return;
   }
 
-  const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}% cached=${modelCached} cfgWindow=${contextWindow ?? "null"}`,
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`,
   );
 
-  // Only probe when we have no signal at all (no cache and no config fallback).
-  if (!modelCached && !contextWindow) {
+  // Only probe when we have no signal at all: no explicit override, no cache, no config fallback.
+  if (usage.windowSource === "heuristic") {
     spawnProbeDetached(usage.model ?? undefined);
-    log(`no cached window for model=${usage.model ?? "?"}; probing in background`);
+    log(`no window info for model=${usage.model ?? "?"}; probing in background`);
     return;
   }
 
@@ -200,7 +200,13 @@ async function main() {
   }
 
   await applyPending(sid, tp);
-  await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
+  await maybeTriggerSummarize(
+    sid,
+    tp,
+    cfg.threshold,
+    cfg.contextWindow,
+    cfg.modelWindows,
+  );
 }
 
 main().catch((err) => {

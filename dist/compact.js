@@ -20,7 +20,7 @@ function windowForModel(model) {
   if (lc.includes("[1m]") || lc.includes("-1m")) return 1e6;
   return DEFAULT_WINDOW;
 }
-async function detectContextUsage(jsonlPath, windowOverride, cacheLookup) {
+async function detectContextUsage(jsonlPath, opts = {}) {
   const { readFile: readFile3 } = await import("node:fs/promises");
   const raw = await readFile3(jsonlPath, "utf-8").catch(() => "");
   if (!raw) return null;
@@ -45,9 +45,24 @@ async function detectContextUsage(jsonlPath, windowOverride, cacheLookup) {
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
     const model = typeof msg.model === "string" ? msg.model : null;
-    const cached = cacheLookup && model ? cacheLookup(model) : null;
-    const window = cached ?? windowOverride ?? windowForModel(model);
-    return { tokens, window, fraction: tokens / window, model };
+    let window;
+    let windowSource;
+    const explicit = opts.modelWindows && model ? opts.modelWindows[model] : null;
+    const cached = opts.cacheLookup && model ? opts.cacheLookup(model) : null;
+    if (explicit) {
+      window = explicit;
+      windowSource = "modelWindows";
+    } else if (cached) {
+      window = cached;
+      windowSource = "cache";
+    } else if (opts.windowOverride) {
+      window = opts.windowOverride;
+      windowSource = "contextWindow";
+    } else {
+      window = windowForModel(model);
+      windowSource = "heuristic";
+    }
+    return { tokens, window, fraction: tokens / window, model, windowSource };
   }
   return null;
 }
@@ -146,6 +161,7 @@ var DEFAULTS = {
   threshold: 0.7,
   modelOverride: null,
   contextWindow: null,
+  modelWindows: {},
   maxExcerptChars: 12e4,
   ratio: 0.5
 };
@@ -286,24 +302,23 @@ async function applyPending(sid, currentTranscript) {
   });
   return true;
 }
-async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) {
-  const usage = await detectContextUsage(
-    transcript,
-    contextWindow,
-    getCachedWindow
-  );
+async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, modelWindows) {
+  const usage = await detectContextUsage(transcript, {
+    modelWindows,
+    cacheLookup: getCachedWindow,
+    windowOverride: contextWindow
+  });
   if (!usage) {
     log(`heartbeat sid=${sid} no-usage-yet`);
     return;
   }
-  const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}% cached=${modelCached} cfgWindow=${contextWindow ?? "null"}`
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`
   );
-  if (!modelCached && !contextWindow) {
+  if (usage.windowSource === "heuristic") {
     spawnProbeDetached(usage.model ?? void 0);
-    log(`no cached window for model=${usage.model ?? "?"}; probing in background`);
+    log(`no window info for model=${usage.model ?? "?"}; probing in background`);
     return;
   }
   if (usage.fraction < threshold) return;
@@ -355,7 +370,13 @@ async function main() {
     return;
   }
   await applyPending(sid, tp);
-  await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
+  await maybeTriggerSummarize(
+    sid,
+    tp,
+    cfg.threshold,
+    cfg.contextWindow,
+    cfg.modelWindows
+  );
 }
 main().catch((err) => {
   log(`stop hook error: ${String(err)}`);

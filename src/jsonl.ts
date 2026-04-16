@@ -141,6 +141,7 @@ export interface ContextUsage {
   window: number;
   fraction: number;
   model: string | null;
+  windowSource: "modelWindows" | "cache" | "contextWindow" | "heuristic";
 }
 
 const DEFAULT_WINDOW = 200_000;
@@ -152,10 +153,18 @@ function windowForModel(model: string | null): number {
   return DEFAULT_WINDOW;
 }
 
+export interface WindowResolveOpts {
+  /** Explicit per-model overrides from config; highest priority. */
+  modelWindows?: Record<string, number> | null;
+  /** Auto-probed cache lookup; beats fallbacks but loses to modelWindows. */
+  cacheLookup?: (model: string) => number | null;
+  /** Global fallback from config, used when no cache/override exists. */
+  windowOverride?: number | null;
+}
+
 export async function detectContextUsage(
   jsonlPath: string,
-  windowOverride?: number | null,
-  cacheLookup?: (model: string) => number | null,
+  opts: WindowResolveOpts = {},
 ): Promise<ContextUsage | null> {
   const { readFile } = await import("node:fs/promises");
   const raw = await readFile(jsonlPath, "utf-8").catch(() => "");
@@ -184,12 +193,28 @@ export async function detectContextUsage(
     if (!tokens) continue;
 
     const model = typeof msg.model === "string" ? msg.model : null;
-    // Priority: per-model probed cache > config override > name-based default.
-    // The cache wins so a global `contextWindow` in config never masks a known
-    // per-model window (e.g. 1M set in config wouldn't silence a 200k opus).
-    const cached = cacheLookup && model ? cacheLookup(model) : null;
-    const window = cached ?? windowOverride ?? windowForModel(model);
-    return { tokens, window, fraction: tokens / window, model };
+
+    // Priority: modelWindows (explicit per-model) > cache (probed) > contextWindow (fallback) > heuristic.
+    // modelWindows wins so a user declaration never gets overwritten by a stale
+    // probe (e.g. [1m] variants share a JSONL model name with their 200k base).
+    let window: number;
+    let windowSource: ContextUsage["windowSource"];
+    const explicit = opts.modelWindows && model ? opts.modelWindows[model] : null;
+    const cached = opts.cacheLookup && model ? opts.cacheLookup(model) : null;
+    if (explicit) {
+      window = explicit;
+      windowSource = "modelWindows";
+    } else if (cached) {
+      window = cached;
+      windowSource = "cache";
+    } else if (opts.windowOverride) {
+      window = opts.windowOverride;
+      windowSource = "contextWindow";
+    } else {
+      window = windowForModel(model);
+      windowSource = "heuristic";
+    }
+    return { tokens, window, fraction: tokens / window, model, windowSource };
   }
   return null;
 }
