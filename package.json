@@ -1,0 +1,26 @@
+{
+  "name": "cc-background-compactor",
+  "version": "0.1.0",
+  "description": "Background compactor for Claude Code CLI — proactive non-blocking context compaction via Stop hook.",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "author": "Ryan Curtis <wednesday@gmail.com>",
+  "homepage": "https://github.com/rbrcurtis/cc-background-compactor",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rbrcurtis/cc-background-compactor.git"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "arg": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

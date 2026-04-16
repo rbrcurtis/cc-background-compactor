@@ -1,0 +1,15 @@
+{
+  "description": "Stop hook: checks context fill from transcript JSONL, triggers background summarizer over threshold, splices pending summary on idle turn.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/compact.js"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "cc-background-compactor",
+  "displayName": "Background Compactor",
+  "description": "Proactive, non-blocking context compaction for Claude Code. Summarizes older messages in the background at a configurable threshold, then splices the summary into the transcript on the next idle turn.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Ryan Curtis",
+    "email": "wednesday@gmail.com"
+  },
+  "homepage": "https://github.com/rbrcurtis/cc-background-compactor",
+  "repository": "https://github.com/rbrcurtis/cc-background-compactor",
+  "license": "MIT",
+  "keywords": ["compaction", "context", "summarization", "claude-code"],
+  "hooks": "./hooks/hooks.json"
+}
