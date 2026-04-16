@@ -20,7 +20,19 @@ async function readStdin(): Promise<string> {
   });
 }
 
+function envDisabled(): boolean {
+  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
+  if (!v) return false;
+  const lc = v.toLowerCase();
+  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
+}
+
 async function main() {
+  if (envDisabled()) {
+    await readStdin();
+    return;
+  }
+
   const raw = await readStdin();
   let input: SessionStartInput = {};
   try {

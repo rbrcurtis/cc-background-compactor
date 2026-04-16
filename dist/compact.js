@@ -503,7 +503,17 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
   closeSync(outFd);
   log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
 }
+function envDisabled() {
+  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
+  if (!v) return false;
+  const lc = v.toLowerCase();
+  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
+}
 async function main() {
+  if (envDisabled()) {
+    await readStdin();
+    return;
+  }
   const raw = await readStdin();
   let input = {};
   try {

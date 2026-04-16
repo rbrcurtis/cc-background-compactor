@@ -199,7 +199,20 @@ async function maybeTriggerSummarize(
   log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
 }
 
+function envDisabled(): boolean {
+  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
+  if (!v) return false;
+  const lc = v.toLowerCase();
+  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
+}
+
 async function main() {
+  if (envDisabled()) {
+    // Consume stdin so the caller doesn't see a broken pipe, then exit silently.
+    await readStdin();
+    return;
+  }
+
   const raw = await readStdin();
   let input: StopHookInput = {};
   try {

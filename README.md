@@ -58,6 +58,12 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 4. `contextWindow` config fallback
 5. Name heuristic on the effective model
 
+## Per-process disable
+
+Set `CC_BACKGROUND_COMPACTOR_DISABLE=1` in the environment of a Claude Code process to make both hooks (`Stop` and `SessionStart`) no-op for that process. Accepted truthy values: `1`, `true`, `yes`, `on`.
+
+Useful when you want the compactor globally installed but skipped for specific invocations — e.g., Agent SDK subprocesses spawned by another orchestrator that does its own compaction.
+
 ## Requirements
 
 - Claude Code CLI with plugin support (`claude` on `PATH`)
