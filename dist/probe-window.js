@@ -48,11 +48,15 @@ function log(msg) {
   } catch {
   }
 }
-async function runProbe() {
+async function runProbe(targetModel) {
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", ["-p", "--output-format", "json"], {
+    const args = ["-p", "--output-format", "json"];
+    if (targetModel) args.push("--model", targetModel);
+    const env = { ...process.env };
+    if (targetModel) delete env.ANTHROPIC_MODEL;
+    const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env
+      env
     });
     let out = "";
     let err = "";
@@ -75,18 +79,17 @@ async function runProbe() {
   });
 }
 async function main() {
+  const targetModel = process.argv[2] ?? null;
   try {
     writeFileSync2(LOCK, String(process.pid));
-    log(`probe starting pid=${process.pid}`);
-    const out = await runProbe();
+    log(`probe starting pid=${process.pid} target=${targetModel ?? "env-default"}`);
+    const out = await runProbe(targetModel);
     const parsed = JSON.parse(out);
     const usage = parsed.modelUsage ?? {};
     const written = [];
     for (const [model, entry] of Object.entries(usage)) {
       if (typeof entry.contextWindow !== "number") continue;
-      const stripped = model.replace(/\[.*?\]$/, "");
       saveWindow(model, entry.contextWindow);
-      if (stripped !== model) saveWindow(stripped, entry.contextWindow);
       written.push(`${model}=${entry.contextWindow}`);
     }
     log(`probe done: ${written.join(", ")}`);

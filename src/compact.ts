@@ -116,7 +116,7 @@ async function maybeTriggerSummarize(
 
   const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
   if (!contextWindow && !modelCached) {
-    spawnProbeDetached();
+    spawnProbeDetached(usage.model ?? undefined);
     process.stderr.write(
       `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background\n`,
     );

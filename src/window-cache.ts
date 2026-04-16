@@ -37,7 +37,7 @@ export function saveWindow(model: string, window: number): void {
   writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
 }
 
-export function spawnProbeDetached(): void {
+export function spawnProbeDetached(targetModel?: string): void {
   if (existsSync(PROBE_LOCK)) {
     try {
       const pid = parseInt(readFileSync(PROBE_LOCK, "utf8"), 10);
@@ -54,10 +54,12 @@ export function spawnProbeDetached(): void {
     }
   }
 
-  const child = spawn(
-    process.execPath,
-    [new URL("./probe-window.js", import.meta.url).pathname],
-    { detached: true, stdio: "ignore", env: process.env },
-  );
+  const args = [new URL("./probe-window.js", import.meta.url).pathname];
+  if (targetModel) args.push(targetModel);
+  const child = spawn(process.execPath, args, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
   child.unref();
 }

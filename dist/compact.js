@@ -192,7 +192,7 @@ function getCachedWindow(model) {
   const entry = cache[model];
   return entry ? entry.window : null;
 }
-function spawnProbeDetached() {
+function spawnProbeDetached(targetModel) {
   if (existsSync2(PROBE_LOCK)) {
     try {
       const pid = parseInt(readFileSync2(PROBE_LOCK, "utf8"), 10);
@@ -206,11 +206,13 @@ function spawnProbeDetached() {
     } catch {
     }
   }
-  const child = spawn(
-    process.execPath,
-    [new URL("./probe-window.js", import.meta.url).pathname],
-    { detached: true, stdio: "ignore", env: process.env }
-  );
+  const args = [new URL("./probe-window.js", import.meta.url).pathname];
+  if (targetModel) args.push(targetModel);
+  const child = spawn(process.execPath, args, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
   child.unref();
 }
 
@@ -293,7 +295,7 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) 
   if (!usage) return;
   const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
   if (!contextWindow && !modelCached) {
-    spawnProbeDetached();
+    spawnProbeDetached(usage.model ?? void 0);
     process.stderr.write(
       `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background
 `

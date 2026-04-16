@@ -1,6 +1,6 @@
 {
   "name": "cc-background-compactor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Background compactor for Claude Code CLI — proactive non-blocking context compaction via Stop hook.",
   "type": "module",
   "private": false,
