@@ -51,7 +51,12 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 | `maxExcerptChars` | `120000` | Cap on characters sent to the summarizer. Keeps the summarization call fast. |
 | `ratio` | `0.5` | Fraction of the conversation to summarize. `0.5` = oldest half. |
 
-**Window resolution priority:** `modelWindows` (your declaration) > probed cache (`~/.config/cc-background-compactor/model-windows.json`) > `contextWindow` (config fallback) > name heuristic (`[1m]`/`-1m` suffix → 1M, else 200k).
+**Window resolution priority:**
+1. `modelWindows` explicit override from config
+2. Session-captured variant suffix: if Claude Code's `SessionStart` hook captured a model identifier containing `[1m]` or `-1m`, force window to 1M. (The JSONL transcript strips this suffix, so without the capture we'd have no signal.)
+3. Probed cache (`~/.config/cc-background-compactor/model-windows.json`, keyed by stripped name)
+4. `contextWindow` config fallback
+5. Name heuristic on the effective model
 
 ## Requirements
 

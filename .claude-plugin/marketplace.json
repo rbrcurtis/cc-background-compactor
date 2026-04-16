@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Background context compactor for Claude Code",
-    "version": "0.1.6"
+    "version": "0.1.7"
   },
   "plugins": [
     {
@@ -16,9 +16,9 @@
         "url": "https://github.com/rbrcurtis/cc-background-compactor.git"
       },
       "description": "Proactive, non-blocking context compaction. Summarizes older messages in the background and splices them into the transcript on the next idle turn.",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "strict": true
     }
   ],
-  "version": "0.1.6"
+  "version": "0.1.7"
 }

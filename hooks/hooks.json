@@ -1,5 +1,5 @@
 {
-  "description": "Stop hook: checks context fill from transcript JSONL, triggers background summarizer over threshold, splices pending summary on idle turn.",
+  "description": "Stop hook checks context fill from transcript JSONL, triggers background summarizer over threshold, splices pending summary on idle turn. SessionStart hook captures the resolved model identifier (including [1m] suffix) so the Stop hook can distinguish 1M from 200k variants, which the JSONL itself strips.",
   "hooks": {
     "Stop": [
       {
@@ -7,6 +7,16 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/compact.js"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/session-start.js"
           }
         ]
       }

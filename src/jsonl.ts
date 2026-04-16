@@ -140,13 +140,16 @@ export interface ContextUsage {
   tokens: number;
   window: number;
   fraction: number;
+  /** Effective model used for window resolution — may be the session-captured identifier (with `[1m]`) or the JSONL model. */
   model: string | null;
+  /** The raw model string from the transcript (always `[1m]`-stripped). */
+  transcriptModel: string | null;
   windowSource: "modelWindows" | "cache" | "contextWindow" | "heuristic";
 }
 
 const DEFAULT_WINDOW = 200_000;
 
-function windowForModel(model: string | null): number {
+export function windowForModel(model: string | null): number {
   if (!model) return DEFAULT_WINDOW;
   const lc = model.toLowerCase();
   if (lc.includes("[1m]") || lc.includes("-1m")) return 1_000_000;
@@ -160,6 +163,12 @@ export interface WindowResolveOpts {
   cacheLookup?: (model: string) => number | null;
   /** Global fallback from config, used when no cache/override exists. */
   windowOverride?: number | null;
+  /**
+   * Model identifier captured at session start (may include `[1m]`).
+   * Takes precedence over the JSONL model for window resolution since
+   * the JSONL strips the `[1m]` suffix.
+   */
+  sessionModel?: string | null;
 }
 
 export async function detectContextUsage(
@@ -192,18 +201,39 @@ export async function detectContextUsage(
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
 
-    const model = typeof msg.model === "string" ? msg.model : null;
+    const transcriptModel = typeof msg.model === "string" ? msg.model : null;
+    // Session-captured model preserves the `[1m]` suffix the JSONL strips.
+    const effectiveModel = opts.sessionModel ?? transcriptModel;
 
-    // Priority: modelWindows (explicit per-model) > cache (probed) > contextWindow (fallback) > heuristic.
-    // modelWindows wins so a user declaration never gets overwritten by a stale
-    // probe (e.g. [1m] variants share a JSONL model name with their 200k base).
+    // Priority:
+    //   1. modelWindows explicit override (user declaration)
+    //   2. session-captured variant suffix (`[1m]`/`-1m` → 1M), since this is
+    //      an authoritative signal we can't get from the stripped JSONL name
+    //   3. probed cache (keyed by stripped name)
+    //   4. contextWindow fallback from config
+    //   5. name heuristic on effective model
+    //
+    // We check modelWindows/cache against both effective and transcript model
+    // so config entries keyed by either work.
     let window: number;
     let windowSource: ContextUsage["windowSource"];
-    const explicit = opts.modelWindows && model ? opts.modelWindows[model] : null;
-    const cached = opts.cacheLookup && model ? opts.cacheLookup(model) : null;
+    const explicit =
+      (opts.modelWindows && effectiveModel ? opts.modelWindows[effectiveModel] : null) ??
+      (opts.modelWindows && transcriptModel ? opts.modelWindows[transcriptModel] : null);
+    const sessionHasExtendedSuffix =
+      opts.sessionModel != null &&
+      (opts.sessionModel.toLowerCase().includes("[1m]") ||
+        opts.sessionModel.toLowerCase().includes("-1m"));
+    const cached =
+      (opts.cacheLookup && effectiveModel ? opts.cacheLookup(effectiveModel) : null) ??
+      (opts.cacheLookup && transcriptModel ? opts.cacheLookup(transcriptModel) : null);
+
     if (explicit) {
       window = explicit;
       windowSource = "modelWindows";
+    } else if (sessionHasExtendedSuffix) {
+      window = 1_000_000;
+      windowSource = "heuristic";
     } else if (cached) {
       window = cached;
       windowSource = "cache";
@@ -211,10 +241,17 @@ export async function detectContextUsage(
       window = opts.windowOverride;
       windowSource = "contextWindow";
     } else {
-      window = windowForModel(model);
+      window = windowForModel(effectiveModel);
       windowSource = "heuristic";
     }
-    return { tokens, window, fraction: tokens / window, model, windowSource };
+    return {
+      tokens,
+      window,
+      fraction: tokens / window,
+      model: effectiveModel,
+      transcriptModel,
+      windowSource,
+    };
   }
   return null;
 }

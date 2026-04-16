@@ -8,6 +8,7 @@ import { dirname } from "node:path";
 import { applyCompaction, detectContextUsage } from "./jsonl.ts";
 import { loadConfig } from "./config.ts";
 import { getCachedWindow, spawnProbeDetached } from "./window-cache.ts";
+import { loadSessionModel, readSettingsModel } from "./session-model.ts";
 
 const BG_LOG = "/tmp/cc-compact-bg.log";
 
@@ -118,6 +119,14 @@ async function applyPending(
   return true;
 }
 
+function resolveSessionModel(sid: string): { model: string | null; origin: string } {
+  const captured = loadSessionModel(sid);
+  if (captured?.model) return { model: captured.model, origin: "sessionStart" };
+  const settings = readSettingsModel();
+  if (settings) return { model: settings, origin: "settings" };
+  return { model: null, origin: "none" };
+}
+
 async function maybeTriggerSummarize(
   sid: string,
   transcript: string,
@@ -125,19 +134,22 @@ async function maybeTriggerSummarize(
   contextWindow: number | null,
   modelWindows: Record<string, number>,
 ): Promise<void> {
+  const { model: sessionModel, origin: modelOrigin } = resolveSessionModel(sid);
+
   const usage = await detectContextUsage(transcript, {
     modelWindows,
     cacheLookup: getCachedWindow,
     windowOverride: contextWindow,
+    sessionModel,
   });
   if (!usage) {
-    log(`heartbeat sid=${sid} no-usage-yet`);
+    log(`heartbeat sid=${sid} no-usage-yet sessionModel=${sessionModel ?? "?"} (${modelOrigin})`);
     return;
   }
 
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`,
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`,
   );
 
   // Only probe when we have no signal at all: no explicit override, no cache, no config fallback.

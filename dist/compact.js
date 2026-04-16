@@ -3,12 +3,12 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 
 // src/compact.ts
 import { readFile as readFile2, unlink } from "node:fs/promises";
-import { existsSync as existsSync3, openSync, closeSync, appendFileSync } from "node:fs";
+import { existsSync as existsSync4, openSync, closeSync, appendFileSync } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dirname as dirname3 } from "node:path";
+import { dirname as dirname4 } from "node:path";
 
 // src/jsonl.ts
 import { readFile, writeFile, rename } from "node:fs/promises";
@@ -44,14 +44,19 @@ async function detectContextUsage(jsonlPath, opts = {}) {
     const cacheCreate = Number(usage.cache_creation_input_tokens ?? 0);
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
-    const model = typeof msg.model === "string" ? msg.model : null;
+    const transcriptModel = typeof msg.model === "string" ? msg.model : null;
+    const effectiveModel = opts.sessionModel ?? transcriptModel;
     let window;
     let windowSource;
-    const explicit = opts.modelWindows && model ? opts.modelWindows[model] : null;
-    const cached = opts.cacheLookup && model ? opts.cacheLookup(model) : null;
+    const explicit = (opts.modelWindows && effectiveModel ? opts.modelWindows[effectiveModel] : null) ?? (opts.modelWindows && transcriptModel ? opts.modelWindows[transcriptModel] : null);
+    const sessionHasExtendedSuffix = opts.sessionModel != null && (opts.sessionModel.toLowerCase().includes("[1m]") || opts.sessionModel.toLowerCase().includes("-1m"));
+    const cached = (opts.cacheLookup && effectiveModel ? opts.cacheLookup(effectiveModel) : null) ?? (opts.cacheLookup && transcriptModel ? opts.cacheLookup(transcriptModel) : null);
     if (explicit) {
       window = explicit;
       windowSource = "modelWindows";
+    } else if (sessionHasExtendedSuffix) {
+      window = 1e6;
+      windowSource = "heuristic";
     } else if (cached) {
       window = cached;
       windowSource = "cache";
@@ -59,10 +64,17 @@ async function detectContextUsage(jsonlPath, opts = {}) {
       window = opts.windowOverride;
       windowSource = "contextWindow";
     } else {
-      window = windowForModel(model);
+      window = windowForModel(effectiveModel);
       windowSource = "heuristic";
     }
-    return { tokens, window, fraction: tokens / window, model, windowSource };
+    return {
+      tokens,
+      window,
+      fraction: tokens / window,
+      model: effectiveModel,
+      transcriptModel,
+      windowSource
+    };
   }
   return null;
 }
@@ -312,6 +324,46 @@ function spawnProbeDetached(targetModel) {
   child.unref();
 }
 
+// src/session-model.ts
+import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join3 } from "node:path";
+var STATE_DIR = join3(
+  homedir3(),
+  ".config",
+  "cc-background-compactor",
+  "session-models"
+);
+function sessionModelPath(sid) {
+  return join3(STATE_DIR, `${sid}.json`);
+}
+function loadSessionModel(sid) {
+  const p = sessionModelPath(sid);
+  if (!existsSync3(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync3(p, "utf8"));
+    if (!parsed.sessionId || !parsed.model) return null;
+    return {
+      sessionId: parsed.sessionId,
+      model: parsed.model,
+      source: parsed.source,
+      capturedAt: parsed.capturedAt ?? 0
+    };
+  } catch {
+    return null;
+  }
+}
+function readSettingsModel() {
+  const p = join3(homedir3(), ".claude", "settings.json");
+  if (!existsSync3(p)) return null;
+  try {
+    const s = JSON.parse(readFileSync3(p, "utf8"));
+    return typeof s.model === "string" && s.model.length > 0 ? s.model : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/compact.ts
 var BG_LOG = "/tmp/cc-compact-bg.log";
 function log(line) {
@@ -325,10 +377,10 @@ function log(line) {
 `);
 }
 function summaryPath(sid) {
-  return join3(tmpdir(), `cc-compact-summary-${sid}.json`);
+  return join4(tmpdir(), `cc-compact-summary-${sid}.json`);
 }
 function lockPath(sid) {
-  return join3(tmpdir(), `cc-compact-lock-${sid}`);
+  return join4(tmpdir(), `cc-compact-lock-${sid}`);
 }
 async function readStdin() {
   return new Promise((resolve) => {
@@ -351,7 +403,7 @@ async function isPidRunning(pid) {
 }
 async function applyPending(sid, currentTranscript) {
   const sp = summaryPath(sid);
-  if (!existsSync3(sp)) return false;
+  if (!existsSync4(sp)) return false;
   let prepared;
   try {
     prepared = JSON.parse(await readFile2(sp, "utf8"));
@@ -391,19 +443,28 @@ async function applyPending(sid, currentTranscript) {
   });
   return true;
 }
+function resolveSessionModel(sid) {
+  const captured = loadSessionModel(sid);
+  if (captured?.model) return { model: captured.model, origin: "sessionStart" };
+  const settings = readSettingsModel();
+  if (settings) return { model: settings, origin: "settings" };
+  return { model: null, origin: "none" };
+}
 async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, modelWindows) {
+  const { model: sessionModel, origin: modelOrigin } = resolveSessionModel(sid);
   const usage = await detectContextUsage(transcript, {
     modelWindows,
     cacheLookup: getCachedWindow,
-    windowOverride: contextWindow
+    windowOverride: contextWindow,
+    sessionModel
   });
   if (!usage) {
-    log(`heartbeat sid=${sid} no-usage-yet`);
+    log(`heartbeat sid=${sid} no-usage-yet sessionModel=${sessionModel ?? "?"} (${modelOrigin})`);
     return;
   }
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`
   );
   if (usage.windowSource === "heuristic") {
     spawnProbeDetached(usage.model ?? void 0);
@@ -412,7 +473,7 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
   }
   if (usage.fraction < threshold) return;
   const lp = lockPath(sid);
-  if (existsSync3(lp)) {
+  if (existsSync4(lp)) {
     try {
       const pid = parseInt(await readFile2(lp, "utf8"), 10);
       if (!Number.isNaN(pid) && await isPidRunning(pid)) {
@@ -422,12 +483,12 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
     } catch {
     }
   }
-  if (existsSync3(summaryPath(sid))) {
+  if (existsSync4(summaryPath(sid))) {
     log(`pending summary already on disk, skipping trigger`);
     return;
   }
-  const here = dirname3(fileURLToPath(import.meta.url));
-  const summarizerPath = join3(here, "summarize.js");
+  const here = dirname4(fileURLToPath(import.meta.url));
+  const summarizerPath = join4(here, "summarize.js");
   const outFd = openSync(BG_LOG, "a");
   const child = spawn2(
     "node",
