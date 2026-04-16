@@ -3,7 +3,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 
 // src/compact.ts
 import { readFile as readFile2, unlink } from "node:fs/promises";
-import { existsSync as existsSync3, openSync, closeSync } from "node:fs";
+import { existsSync as existsSync3, openSync, closeSync, appendFileSync } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
 import { join as join3 } from "node:path";
 import { tmpdir } from "node:os";
@@ -45,13 +45,8 @@ async function detectContextUsage(jsonlPath, windowOverride, cacheLookup) {
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
     const model = typeof msg.model === "string" ? msg.model : null;
-    let window;
-    if (windowOverride) {
-      window = windowOverride;
-    } else {
-      const cached = cacheLookup && model ? cacheLookup(model) : null;
-      window = cached ?? windowForModel(model);
-    }
+    const cached = cacheLookup && model ? cacheLookup(model) : null;
+    const window = cached ?? windowOverride ?? windowForModel(model);
     return { tokens, window, fraction: tokens / window, model };
   }
   return null;
@@ -217,6 +212,17 @@ function spawnProbeDetached(targetModel) {
 }
 
 // src/compact.ts
+var BG_LOG = "/tmp/cc-compact-bg.log";
+function log(line) {
+  const stamp = (/* @__PURE__ */ new Date()).toISOString();
+  try {
+    appendFileSync(BG_LOG, `${stamp} ${line}
+`);
+  } catch {
+  }
+  process.stderr.write(`[cc-compact] ${line}
+`);
+}
 function summaryPath(sid) {
   return join3(tmpdir(), `cc-compact-summary-${sid}.json`);
 }
@@ -249,17 +255,13 @@ async function applyPending(sid, currentTranscript) {
   try {
     prepared = JSON.parse(await readFile2(sp, "utf8"));
   } catch (err) {
-    process.stderr.write(
-      `[cc-compact] bad summary file, discarding: ${String(err)}
-`
-    );
+    log(`bad summary file, discarding: ${String(err)}`);
     await unlink(sp).catch(() => {
     });
     return false;
   }
   if (prepared.transcriptPath !== currentTranscript) {
-    process.stderr.write(`[cc-compact] summary transcript mismatch, discarding
-`);
+    log(`summary transcript mismatch, discarding`);
     await unlink(sp).catch(() => {
     });
     return false;
@@ -271,13 +273,11 @@ async function applyPending(sid, currentTranscript) {
       summary: prepared.summary,
       lastOldLineIdx: prepared.lastOldLineIdx
     });
-    process.stderr.write(
-      `[cc-compact] spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars
-`
+    log(
+      `spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars`
     );
   } catch (err) {
-    process.stderr.write(`[cc-compact] apply failed: ${String(err)}
-`);
+    log(`apply failed: ${String(err)}`);
     await unlink(sp).catch(() => {
     });
     return false;
@@ -292,14 +292,18 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) 
     contextWindow,
     getCachedWindow
   );
-  if (!usage) return;
+  if (!usage) {
+    log(`heartbeat sid=${sid} no-usage-yet`);
+    return;
+  }
   const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
-  if (!contextWindow && !modelCached) {
+  const pct = (usage.fraction * 100).toFixed(1);
+  log(
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}% cached=${modelCached} cfgWindow=${contextWindow ?? "null"}`
+  );
+  if (!modelCached && !contextWindow) {
     spawnProbeDetached(usage.model ?? void 0);
-    process.stderr.write(
-      `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background
-`
-    );
+    log(`no cached window for model=${usage.model ?? "?"}; probing in background`);
     return;
   }
   if (usage.fraction < threshold) return;
@@ -307,14 +311,20 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) 
   if (existsSync3(lp)) {
     try {
       const pid = parseInt(await readFile2(lp, "utf8"), 10);
-      if (!Number.isNaN(pid) && await isPidRunning(pid)) return;
+      if (!Number.isNaN(pid) && await isPidRunning(pid)) {
+        log(`summarizer already running pid=${pid}, skipping`);
+        return;
+      }
     } catch {
     }
   }
-  if (existsSync3(summaryPath(sid))) return;
+  if (existsSync3(summaryPath(sid))) {
+    log(`pending summary already on disk, skipping trigger`);
+    return;
+  }
   const here = dirname3(fileURLToPath(import.meta.url));
   const summarizerPath = join3(here, "summarize.js");
-  const outFd = openSync("/tmp/cc-compact-bg.log", "a");
+  const outFd = openSync(BG_LOG, "a");
   const child = spawn2(
     "node",
     [summarizerPath, "--session-id", sid, "--transcript", transcript],
@@ -326,11 +336,7 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) 
   );
   child.unref();
   closeSync(outFd);
-  const pct = (usage.fraction * 100).toFixed(1);
-  process.stderr.write(
-    `[cc-compact] triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})
-`
-  );
+  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
 }
 async function main() {
   const raw = await readStdin();
@@ -344,11 +350,13 @@ async function main() {
   const tp = input.transcript_path;
   if (!sid || !tp) return;
   const cfg = loadConfig();
-  if (!cfg.enabled) return;
+  if (!cfg.enabled) {
+    log(`heartbeat sid=${sid} disabled`);
+    return;
+  }
   await applyPending(sid, tp);
   await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
 }
 main().catch((err) => {
-  process.stderr.write(`[cc-compact] stop hook error: ${String(err)}
-`);
+  log(`stop hook error: ${String(err)}`);
 });

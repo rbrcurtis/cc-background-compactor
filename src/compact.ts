@@ -1,5 +1,5 @@
 import { readFile, unlink } from "node:fs/promises";
-import { existsSync, openSync, closeSync } from "node:fs";
+import { existsSync, openSync, closeSync, appendFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,6 +8,18 @@ import { dirname } from "node:path";
 import { applyCompaction, detectContextUsage } from "./jsonl.ts";
 import { loadConfig } from "./config.ts";
 import { getCachedWindow, spawnProbeDetached } from "./window-cache.ts";
+
+const BG_LOG = "/tmp/cc-compact-bg.log";
+
+function log(line: string): void {
+  const stamp = new Date().toISOString();
+  try {
+    appendFileSync(BG_LOG, `${stamp} ${line}\n`);
+  } catch {
+    /* best-effort */
+  }
+  process.stderr.write(`[cc-compact] ${line}\n`);
+}
 
 interface StopHookInput {
   session_id?: string;
@@ -68,15 +80,13 @@ async function applyPending(
   try {
     prepared = JSON.parse(await readFile(sp, "utf8")) as PreparedSummary;
   } catch (err) {
-    process.stderr.write(
-      `[cc-compact] bad summary file, discarding: ${String(err)}\n`,
-    );
+    log(`bad summary file, discarding: ${String(err)}`);
     await unlink(sp).catch(() => {});
     return false;
   }
 
   if (prepared.transcriptPath !== currentTranscript) {
-    process.stderr.write(`[cc-compact] summary transcript mismatch, discarding\n`);
+    log(`summary transcript mismatch, discarding`);
     await unlink(sp).catch(() => {});
     return false;
   }
@@ -88,11 +98,11 @@ async function applyPending(
       summary: prepared.summary,
       lastOldLineIdx: prepared.lastOldLineIdx,
     });
-    process.stderr.write(
-      `[cc-compact] spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars\n`,
+    log(
+      `spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars`,
     );
   } catch (err) {
-    process.stderr.write(`[cc-compact] apply failed: ${String(err)}\n`);
+    log(`apply failed: ${String(err)}`);
     await unlink(sp).catch(() => {});
     return false;
   }
@@ -112,14 +122,21 @@ async function maybeTriggerSummarize(
     contextWindow,
     getCachedWindow,
   );
-  if (!usage) return;
+  if (!usage) {
+    log(`heartbeat sid=${sid} no-usage-yet`);
+    return;
+  }
 
   const modelCached = usage.model ? getCachedWindow(usage.model) !== null : false;
-  if (!contextWindow && !modelCached) {
+  const pct = (usage.fraction * 100).toFixed(1);
+  log(
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} tokens=${usage.tokens} window=${usage.window} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}% cached=${modelCached} cfgWindow=${contextWindow ?? "null"}`,
+  );
+
+  // Only probe when we have no signal at all (no cache and no config fallback).
+  if (!modelCached && !contextWindow) {
     spawnProbeDetached(usage.model ?? undefined);
-    process.stderr.write(
-      `[cc-compact] no cached window for model=${usage.model ?? "?"}; skipping trigger and probing in background\n`,
-    );
+    log(`no cached window for model=${usage.model ?? "?"}; probing in background`);
     return;
   }
 
@@ -129,18 +146,24 @@ async function maybeTriggerSummarize(
   if (existsSync(lp)) {
     try {
       const pid = parseInt(await readFile(lp, "utf8"), 10);
-      if (!Number.isNaN(pid) && (await isPidRunning(pid))) return;
+      if (!Number.isNaN(pid) && (await isPidRunning(pid))) {
+        log(`summarizer already running pid=${pid}, skipping`);
+        return;
+      }
     } catch {
       /* treat as stale */
     }
   }
 
-  if (existsSync(summaryPath(sid))) return;
+  if (existsSync(summaryPath(sid))) {
+    log(`pending summary already on disk, skipping trigger`);
+    return;
+  }
 
   const here = dirname(fileURLToPath(import.meta.url));
   const summarizerPath = join(here, "summarize.js");
 
-  const outFd = openSync("/tmp/cc-compact-bg.log", "a");
+  const outFd = openSync(BG_LOG, "a");
 
   const child = spawn(
     "node",
@@ -154,10 +177,7 @@ async function maybeTriggerSummarize(
   child.unref();
   closeSync(outFd);
 
-  const pct = (usage.fraction * 100).toFixed(1);
-  process.stderr.write(
-    `[cc-compact] triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})\n`,
-  );
+  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
 }
 
 async function main() {
@@ -174,12 +194,15 @@ async function main() {
   if (!sid || !tp) return;
 
   const cfg = loadConfig();
-  if (!cfg.enabled) return;
+  if (!cfg.enabled) {
+    log(`heartbeat sid=${sid} disabled`);
+    return;
+  }
 
   await applyPending(sid, tp);
   await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
 }
 
 main().catch((err) => {
-  process.stderr.write(`[cc-compact] stop hook error: ${String(err)}\n`);
+  log(`stop hook error: ${String(err)}`);
 });

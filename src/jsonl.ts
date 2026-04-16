@@ -184,13 +184,11 @@ export async function detectContextUsage(
     if (!tokens) continue;
 
     const model = typeof msg.model === "string" ? msg.model : null;
-    let window: number;
-    if (windowOverride) {
-      window = windowOverride;
-    } else {
-      const cached = cacheLookup && model ? cacheLookup(model) : null;
-      window = cached ?? windowForModel(model);
-    }
+    // Priority: per-model probed cache > config override > name-based default.
+    // The cache wins so a global `contextWindow` in config never masks a known
+    // per-model window (e.g. 1M set in config wouldn't silence a 200k opus).
+    const cached = cacheLookup && model ? cacheLookup(model) : null;
+    const window = cached ?? windowOverride ?? windowForModel(model);
     return { tokens, window, fraction: tokens / window, model };
   }
   return null;

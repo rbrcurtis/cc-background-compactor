@@ -45,7 +45,7 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 | `enabled` | `true` | Kill switch. |
 | `threshold` | `0.7` | Fraction of context fill that triggers summarization (0.7 = 70%). |
 | `modelOverride` | `null` | Pin a specific model for summarization. `null` = detect the parent session's model from the transcript and use the same one. |
-| `contextWindow` | `null` | Override the context window size in tokens. `null` = auto-probe the model via `claude -p` and cache the result. **Set this to `1000000` if you use a 1M-context variant** (`claude-opus-4-7[1m]`, `claude-sonnet-4-6[1m]`, etc.) — the JSONL transcript strips the `[1m]` suffix, so auto-detection can't distinguish 1M variants from their 200k base models. |
+| `contextWindow` | `null` | Fallback context window in tokens for models that aren't in the probed cache yet. `null` = auto-probe the model via `claude -p` and cache the result. Set to `1000000` if you use a 1M-context variant (`claude-opus-4-7[1m]`, `claude-sonnet-4-6[1m]`, etc.) — the JSONL strips the `[1m]` suffix so the probe can't distinguish 1M variants from their 200k base models. **Priority:** probed cache (`~/.config/cc-background-compactor/model-windows.json`) wins over this value, so setting it doesn't mask a known per-model window. Delete the cache entry if you need to re-probe. |
 | `maxExcerptChars` | `120000` | Cap on characters sent to the summarizer. Keeps the summarization call fast. |
 | `ratio` | `0.5` | Fraction of the conversation to summarize. `0.5` = oldest half. |
 
@@ -68,6 +68,16 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 ```
 
 Any in-flight summarization finishes and writes to `/tmp` but is harmless — the Stop hook is gone so nothing will splice it. You can delete `/tmp/cc-compact-*` and `~/.config/cc-background-compactor/` to clean up.
+
+## Debugging
+
+Every Stop-hook invocation writes a heartbeat line to `/tmp/cc-compact-bg.log`:
+
+```
+2026-04-16T17:45:00.000Z heartbeat sid=abc-123 model=claude-opus-4-7 tokens=196906 window=200000 fraction=98.5% threshold=70% cached=true cfgWindow=null
+```
+
+`tail -f /tmp/cc-compact-bg.log` to confirm the hook is firing and see why it is/isn't triggering.
 
 ## Build from source
 
