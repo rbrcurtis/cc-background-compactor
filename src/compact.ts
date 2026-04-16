@@ -36,6 +36,7 @@ interface PreparedSummary {
   messagesBefore: number;
   messagesCovered: number;
   summaryChars: number;
+  excerptChars?: number;
   prepareDurationMs: number;
   timestamp: number;
 }
@@ -92,11 +93,17 @@ async function applyPending(
   }
 
   try {
+    const preTokens = prepared.excerptChars
+      ? Math.max(1, Math.round(prepared.excerptChars / 4))
+      : 0;
     await applyCompaction({
       sessionId: prepared.sessionId,
       jsonlPath: prepared.transcriptPath,
       summary: prepared.summary,
       lastOldLineIdx: prepared.lastOldLineIdx,
+      preTokens,
+      durationMs: prepared.prepareDurationMs,
+      trigger: "background",
     });
     log(
       `spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars`,

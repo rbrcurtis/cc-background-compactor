@@ -2,7 +2,7 @@
   "name": "cc-background-compactor",
   "displayName": "Background Compactor",
   "description": "Proactive, non-blocking context compaction for Claude Code. Summarizes older messages in the background at a configurable threshold, then splices the summary into the transcript on the next idle turn.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "author": {
     "name": "Ryan Curtis",
     "email": "wednesday@gmail.com"

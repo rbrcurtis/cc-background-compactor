@@ -464,6 +464,7 @@ async function main() {
         messagesBefore: messages.length,
         messagesCovered: cutoff,
         summaryChars: summary.length,
+        excerptChars: excerpt.length,
         prepareDurationMs: durMs,
         timestamp: Date.now()
       })

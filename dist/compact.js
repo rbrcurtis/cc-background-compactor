@@ -66,20 +66,74 @@ async function detectContextUsage(jsonlPath, opts = {}) {
   }
   return null;
 }
-function findVersion(lines) {
+function extractSessionMetadata(lines) {
+  const meta = {
+    version: "2.1.108",
+    cwd: null,
+    gitBranch: null,
+    userType: "external",
+    entrypoint: "cli",
+    slug: null
+  };
+  let haveVersion = false;
+  let haveCwd = false;
+  let haveBranch = false;
+  let haveSlug = false;
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (haveVersion && haveCwd && haveBranch && haveSlug) break;
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!haveVersion && typeof obj.version === "string") {
+      meta.version = obj.version;
+      haveVersion = true;
+    }
+    if (!haveCwd && typeof obj.cwd === "string") {
+      meta.cwd = obj.cwd;
+      haveCwd = true;
+    }
+    if (!haveBranch && typeof obj.gitBranch === "string") {
+      meta.gitBranch = obj.gitBranch;
+      haveBranch = true;
+    }
+    if (!haveSlug && typeof obj.slug === "string") {
+      meta.slug = obj.slug;
+      haveSlug = true;
+    }
+    if (typeof obj.userType === "string") meta.userType = obj.userType;
+    if (typeof obj.entrypoint === "string") meta.entrypoint = obj.entrypoint;
+  }
+  return meta;
+}
+function firstEntryUuid(lines, endIdxInclusive) {
+  for (let i = 0; i <= endIdxInclusive; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed);
-      if (typeof obj.version === "string") return obj.version;
+      if (obj.type === "user" || obj.type === "assistant") {
+        if (typeof obj.uuid === "string") return obj.uuid;
+      }
     } catch {
     }
   }
-  return "2.1.108";
+  return null;
 }
 async function applyCompaction(opts) {
-  const { sessionId, jsonlPath, summary, lastOldLineIdx } = opts;
+  const {
+    sessionId,
+    jsonlPath,
+    summary,
+    lastOldLineIdx,
+    preTokens = 0,
+    durationMs = 0,
+    trigger = "background"
+  } = opts;
   const raw = await readFile(jsonlPath, "utf-8");
   const lines = raw.split("\n");
   while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
@@ -96,6 +150,13 @@ async function applyCompaction(opts) {
   const lastOldLine = lines[lastOldLineIdx];
   const lastOldObj = JSON.parse(lastOldLine);
   const lastOldUuid = lastOldObj.uuid;
+  const meta = extractSessionMetadata(lines);
+  const headUuid = firstEntryUuid(lines, lastOldLineIdx) ?? lastOldUuid;
+  const postTokens = Math.max(1, Math.round(summary.length / 4));
+  const summaryContent = `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Summary:
+${summary}`;
   const boundaryEntry = JSON.stringify({
     parentUuid: null,
     logicalParentUuid: lastOldUuid,
@@ -105,7 +166,26 @@ async function applyCompaction(opts) {
     content: "Conversation compacted",
     isMeta: false,
     timestamp: now,
-    uuid: boundaryUuid
+    uuid: boundaryUuid,
+    level: "info",
+    compactMetadata: {
+      trigger,
+      preTokens,
+      durationMs,
+      preservedSegment: {
+        headUuid,
+        anchorUuid: summaryUuid,
+        tailUuid: lastOldUuid
+      },
+      postTokens
+    },
+    userType: meta.userType,
+    entrypoint: meta.entrypoint,
+    cwd: meta.cwd,
+    sessionId,
+    version: meta.version,
+    gitBranch: meta.gitBranch,
+    slug: meta.slug
   });
   const summaryEntry = JSON.stringify({
     parentUuid: boundaryUuid,
@@ -113,14 +193,19 @@ async function applyCompaction(opts) {
     type: "user",
     message: {
       role: "user",
-      content: `[Context Summary \u2014 the following summarizes the earlier part of this conversation]
-
-${summary}`
+      content: summaryContent
     },
+    isVisibleInTranscriptOnly: true,
+    isCompactSummary: true,
     uuid: summaryUuid,
     timestamp: now,
+    userType: meta.userType,
+    entrypoint: meta.entrypoint,
+    cwd: meta.cwd,
     sessionId,
-    version: findVersion(lines)
+    version: meta.version,
+    gitBranch: meta.gitBranch,
+    slug: meta.slug
   });
   const outLines = lines.slice(0, lastOldLineIdx + 1);
   outLines.push(boundaryEntry);
@@ -283,11 +368,15 @@ async function applyPending(sid, currentTranscript) {
     return false;
   }
   try {
+    const preTokens = prepared.excerptChars ? Math.max(1, Math.round(prepared.excerptChars / 4)) : 0;
     await applyCompaction({
       sessionId: prepared.sessionId,
       jsonlPath: prepared.transcriptPath,
       summary: prepared.summary,
-      lastOldLineIdx: prepared.lastOldLineIdx
+      lastOldLineIdx: prepared.lastOldLineIdx,
+      preTokens,
+      durationMs: prepared.prepareDurationMs,
+      trigger: "background"
     });
     log(
       `spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars`

@@ -238,18 +238,80 @@ export function detectParentModel(lines: string[]): string | null {
   return null;
 }
 
-function findVersion(lines: string[]): string {
+/**
+ * Session-level metadata that CC stamps on every entry. We harvest it from
+ * the latest entry that carries it so synthetic boundary/summary entries
+ * look native to CC's loader.
+ */
+interface SessionMetadata {
+  version: string;
+  cwd: string | null;
+  gitBranch: string | null;
+  userType: string;
+  entrypoint: string;
+  slug: string | null;
+}
+
+function extractSessionMetadata(lines: string[]): SessionMetadata {
+  const meta: SessionMetadata = {
+    version: "2.1.108",
+    cwd: null,
+    gitBranch: null,
+    userType: "external",
+    entrypoint: "cli",
+    slug: null,
+  };
+  let haveVersion = false;
+  let haveCwd = false;
+  let haveBranch = false;
+  let haveSlug = false;
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (haveVersion && haveCwd && haveBranch && haveSlug) break;
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    let obj: Record<string, unknown>;
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!haveVersion && typeof obj.version === "string") {
+      meta.version = obj.version;
+      haveVersion = true;
+    }
+    if (!haveCwd && typeof obj.cwd === "string") {
+      meta.cwd = obj.cwd;
+      haveCwd = true;
+    }
+    if (!haveBranch && typeof obj.gitBranch === "string") {
+      meta.gitBranch = obj.gitBranch;
+      haveBranch = true;
+    }
+    if (!haveSlug && typeof obj.slug === "string") {
+      meta.slug = obj.slug;
+      haveSlug = true;
+    }
+    if (typeof obj.userType === "string") meta.userType = obj.userType;
+    if (typeof obj.entrypoint === "string") meta.entrypoint = obj.entrypoint;
+  }
+  return meta;
+}
+
+/** First UUID of a real conversation entry in the pre-compact range. */
+function firstEntryUuid(lines: string[], endIdxInclusive: number): string | null {
+  for (let i = 0; i <= endIdxInclusive; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed) as Record<string, unknown>;
-      if (typeof obj.version === "string") return obj.version;
+      if (obj.type === "user" || obj.type === "assistant") {
+        if (typeof obj.uuid === "string") return obj.uuid;
+      }
     } catch {
       /* skip */
     }
   }
-  return "2.1.108";
+  return null;
 }
 
 export interface ApplyOpts {
@@ -257,12 +319,26 @@ export interface ApplyOpts {
   jsonlPath: string;
   summary: string;
   lastOldLineIdx: number;
+  /** Approx pre-compact token count for compactMetadata.preTokens. */
+  preTokens?: number;
+  /** Duration of the summarize step for compactMetadata.durationMs. */
+  durationMs?: number;
+  /** Trigger label (e.g. "background"). Defaults to "background". */
+  trigger?: string;
 }
 
 export async function applyCompaction(opts: ApplyOpts): Promise<{
   outLines: number;
 }> {
-  const { sessionId, jsonlPath, summary, lastOldLineIdx } = opts;
+  const {
+    sessionId,
+    jsonlPath,
+    summary,
+    lastOldLineIdx,
+    preTokens = 0,
+    durationMs = 0,
+    trigger = "background",
+  } = opts;
 
   const raw = await readFile(jsonlPath, "utf-8");
   const lines = raw.split("\n");
@@ -284,6 +360,16 @@ export async function applyCompaction(opts: ApplyOpts): Promise<{
   const lastOldObj = JSON.parse(lastOldLine) as Record<string, unknown>;
   const lastOldUuid = lastOldObj.uuid as string;
 
+  const meta = extractSessionMetadata(lines);
+  const headUuid = firstEntryUuid(lines, lastOldLineIdx) ?? lastOldUuid;
+  // ~4 chars per token is a coarse but reasonable English estimate.
+  const postTokens = Math.max(1, Math.round(summary.length / 4));
+
+  const summaryContent =
+    `This session is being continued from a previous conversation that ran out of context. ` +
+    `The summary below covers the earlier portion of the conversation.\n\n` +
+    `Summary:\n${summary}`;
+
   const boundaryEntry = JSON.stringify({
     parentUuid: null,
     logicalParentUuid: lastOldUuid,
@@ -294,6 +380,25 @@ export async function applyCompaction(opts: ApplyOpts): Promise<{
     isMeta: false,
     timestamp: now,
     uuid: boundaryUuid,
+    level: "info",
+    compactMetadata: {
+      trigger,
+      preTokens,
+      durationMs,
+      preservedSegment: {
+        headUuid,
+        anchorUuid: summaryUuid,
+        tailUuid: lastOldUuid,
+      },
+      postTokens,
+    },
+    userType: meta.userType,
+    entrypoint: meta.entrypoint,
+    cwd: meta.cwd,
+    sessionId,
+    version: meta.version,
+    gitBranch: meta.gitBranch,
+    slug: meta.slug,
   });
 
   const summaryEntry = JSON.stringify({
@@ -302,12 +407,19 @@ export async function applyCompaction(opts: ApplyOpts): Promise<{
     type: "user",
     message: {
       role: "user",
-      content: `[Context Summary — the following summarizes the earlier part of this conversation]\n\n${summary}`,
+      content: summaryContent,
     },
+    isVisibleInTranscriptOnly: true,
+    isCompactSummary: true,
     uuid: summaryUuid,
     timestamp: now,
+    userType: meta.userType,
+    entrypoint: meta.entrypoint,
+    cwd: meta.cwd,
     sessionId,
-    version: findVersion(lines),
+    version: meta.version,
+    gitBranch: meta.gitBranch,
+    slug: meta.slug,
   });
 
   const outLines: string[] = lines.slice(0, lastOldLineIdx + 1);
