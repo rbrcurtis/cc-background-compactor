@@ -104,8 +104,9 @@ async function maybeTriggerSummarize(
   sid: string,
   transcript: string,
   threshold: number,
+  contextWindow: number | null,
 ): Promise<void> {
-  const usage = await detectContextUsage(transcript);
+  const usage = await detectContextUsage(transcript, contextWindow);
   if (!usage) return;
 
   if (usage.fraction < threshold) return;
@@ -162,7 +163,7 @@ async function main() {
   if (!cfg.enabled) return;
 
   await applyPending(sid, tp);
-  await maybeTriggerSummarize(sid, tp, cfg.threshold);
+  await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
 }
 
 main().catch((err) => {

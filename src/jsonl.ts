@@ -154,6 +154,7 @@ function windowForModel(model: string | null): number {
 
 export async function detectContextUsage(
   jsonlPath: string,
+  windowOverride?: number | null,
 ): Promise<ContextUsage | null> {
   const { readFile } = await import("node:fs/promises");
   const raw = await readFile(jsonlPath, "utf-8").catch(() => "");
@@ -182,7 +183,7 @@ export async function detectContextUsage(
     if (!tokens) continue;
 
     const model = typeof msg.model === "string" ? msg.model : null;
-    const window = windowForModel(model);
+    const window = windowOverride ?? windowForModel(model);
     return { tokens, window, fraction: tokens / window, model };
   }
   return null;

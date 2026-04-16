@@ -34,6 +34,7 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
   "enabled": true,
   "threshold": 0.7,
   "modelOverride": null,
+  "contextWindow": null,
   "maxExcerptChars": 120000,
   "ratio": 0.5
 }
@@ -44,6 +45,7 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 | `enabled` | `true` | Kill switch. |
 | `threshold` | `0.7` | Fraction of context fill that triggers summarization (0.7 = 70%). |
 | `modelOverride` | `null` | Pin a specific model for summarization. `null` = detect the parent session's model from the transcript and use the same one. |
+| `contextWindow` | `null` | Override the context window size in tokens. `null` = auto (200k default, 1M if model string contains `[1m]` or `-1m`). Set to `1000000` if you run Opus 4.7 or any 1M-context variant where the JSONL model field doesn't carry the suffix. |
 | `maxExcerptChars` | `120000` | Cap on characters sent to the summarizer. Keeps the summarization call fast. |
 | `ratio` | `0.5` | Fraction of the conversation to summarize. `0.5` = oldest half. |
 

@@ -20,7 +20,7 @@ function windowForModel(model) {
   if (lc.includes("[1m]") || lc.includes("-1m")) return 1e6;
   return DEFAULT_WINDOW;
 }
-async function detectContextUsage(jsonlPath) {
+async function detectContextUsage(jsonlPath, windowOverride) {
   const { readFile: readFile3 } = await import("node:fs/promises");
   const raw = await readFile3(jsonlPath, "utf-8").catch(() => "");
   if (!raw) return null;
@@ -45,7 +45,7 @@ async function detectContextUsage(jsonlPath) {
     const tokens = input + cacheRead + cacheCreate;
     if (!tokens) continue;
     const model = typeof msg.model === "string" ? msg.model : null;
-    const window = windowForModel(model);
+    const window = windowOverride ?? windowForModel(model);
     return { tokens, window, fraction: tokens / window, model };
   }
   return null;
@@ -144,6 +144,7 @@ var DEFAULTS = {
   enabled: true,
   threshold: 0.7,
   modelOverride: null,
+  contextWindow: null,
   maxExcerptChars: 12e4,
   ratio: 0.5
 };
@@ -230,8 +231,8 @@ async function applyPending(sid, currentTranscript) {
   });
   return true;
 }
-async function maybeTriggerSummarize(sid, transcript, threshold) {
-  const usage = await detectContextUsage(transcript);
+async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow) {
+  const usage = await detectContextUsage(transcript, contextWindow);
   if (!usage) return;
   if (usage.fraction < threshold) return;
   const lp = lockPath(sid);
@@ -277,7 +278,7 @@ async function main() {
   const cfg = loadConfig();
   if (!cfg.enabled) return;
   await applyPending(sid, tp);
-  await maybeTriggerSummarize(sid, tp, cfg.threshold);
+  await maybeTriggerSummarize(sid, tp, cfg.threshold, cfg.contextWindow);
 }
 main().catch((err) => {
   process.stderr.write(`[cc-compact] stop hook error: ${String(err)}

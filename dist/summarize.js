@@ -303,6 +303,7 @@ var DEFAULTS = {
   enabled: true,
   threshold: 0.7,
   modelOverride: null,
+  contextWindow: null,
   maxExcerptChars: 12e4,
   ratio: 0.5
 };
