@@ -2,11 +2,10 @@
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // src/compact.ts
-import { readFile as readFile2, unlink } from "node:fs/promises";
-import { existsSync as existsSync4, openSync, closeSync, appendFileSync } from "node:fs";
+import { readFile as readFile3 } from "node:fs/promises";
+import { existsSync as existsSync5, openSync, closeSync } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
-import { join as join4 } from "node:path";
-import { tmpdir } from "node:os";
+import { join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname as dirname4 } from "node:path";
 
@@ -21,8 +20,8 @@ function windowForModel(model) {
   return DEFAULT_WINDOW;
 }
 async function detectContextUsage(jsonlPath, opts = {}) {
-  const { readFile: readFile3 } = await import("node:fs/promises");
-  const raw = await readFile3(jsonlPath, "utf-8").catch(() => "");
+  const { readFile: readFile4 } = await import("node:fs/promises");
+  const raw = await readFile4(jsonlPath, "utf-8").catch(() => "");
   if (!raw) return null;
   const lines = raw.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -256,6 +255,7 @@ import { join, dirname } from "node:path";
 var DEFAULTS = {
   enabled: true,
   threshold: 0.7,
+  windowThresholds: {},
   modelOverride: null,
   contextWindow: null,
   modelWindows: {},
@@ -364,7 +364,11 @@ function readSettingsModel() {
   }
 }
 
-// src/compact.ts
+// src/hooks-shared.ts
+import { readFile as readFile2, unlink } from "node:fs/promises";
+import { existsSync as existsSync4, appendFileSync } from "node:fs";
+import { join as join4 } from "node:path";
+import { tmpdir } from "node:os";
 var BG_LOG = "/tmp/cc-compact-bg.log";
 function log(line) {
   const stamp = (/* @__PURE__ */ new Date()).toISOString();
@@ -393,13 +397,11 @@ async function readStdin() {
     process.stdin.on("error", () => resolve(buf));
   });
 }
-async function isPidRunning(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+function envDisabled() {
+  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
+  if (!v) return false;
+  const lc = v.toLowerCase();
+  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
 }
 async function applyPending(sid, currentTranscript) {
   const sp = summaryPath(sid);
@@ -443,6 +445,33 @@ async function applyPending(sid, currentTranscript) {
   });
   return true;
 }
+function sighupParentIfWrapped(reason) {
+  if (process.env.CCH_WRAPPER !== "1") {
+    log(`splice took effect, but CCH_WRAPPER not set \u2014 live session won't reload (${reason})`);
+    return;
+  }
+  try {
+    process.kill(process.ppid, "SIGHUP");
+    log(`sent SIGHUP to cc (pid=${process.ppid}) for cch auto-reload (${reason})`);
+  } catch (err) {
+    log(`SIGHUP to cc failed (${reason}): ${String(err)}`);
+  }
+}
+async function spliceAndReload(event, sid, transcriptPath) {
+  const spliced = await applyPending(sid, transcriptPath);
+  if (spliced) sighupParentIfWrapped(event);
+  return spliced;
+}
+
+// src/compact.ts
+async function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function resolveSessionModel(sid) {
   const captured = loadSessionModel(sid);
   if (captured?.model) return { model: captured.model, origin: "sessionStart" };
@@ -450,7 +479,7 @@ function resolveSessionModel(sid) {
   if (settings) return { model: settings, origin: "settings" };
   return { model: null, origin: "none" };
 }
-async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, modelWindows) {
+async function maybeTriggerSummarize(sid, transcript, threshold, windowThresholds, contextWindow, modelWindows) {
   const { model: sessionModel, origin: modelOrigin } = resolveSessionModel(sid);
   const usage = await detectContextUsage(transcript, {
     modelWindows,
@@ -462,20 +491,23 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
     log(`heartbeat sid=${sid} no-usage-yet sessionModel=${sessionModel ?? "?"} (${modelOrigin})`);
     return;
   }
+  const override = windowThresholds[String(usage.window)];
+  const effectiveThreshold = typeof override === "number" ? override : threshold;
+  const thresholdSource = typeof override === "number" ? "windowThresholds" : "default";
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(effectiveThreshold * 100).toFixed(0)}% (${thresholdSource})`
   );
   if (usage.windowSource === "heuristic") {
     spawnProbeDetached(usage.model ?? void 0);
     log(`no window info for model=${usage.model ?? "?"}; probing in background`);
     return;
   }
-  if (usage.fraction < threshold) return;
+  if (usage.fraction < effectiveThreshold) return;
   const lp = lockPath(sid);
-  if (existsSync4(lp)) {
+  if (existsSync5(lp)) {
     try {
-      const pid = parseInt(await readFile2(lp, "utf8"), 10);
+      const pid = parseInt(await readFile3(lp, "utf8"), 10);
       if (!Number.isNaN(pid) && await isPidRunning(pid)) {
         log(`summarizer already running pid=${pid}, skipping`);
         return;
@@ -483,12 +515,12 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
     } catch {
     }
   }
-  if (existsSync4(summaryPath(sid))) {
+  if (existsSync5(summaryPath(sid))) {
     log(`pending summary already on disk, skipping trigger`);
     return;
   }
   const here = dirname4(fileURLToPath(import.meta.url));
-  const summarizerPath = join4(here, "summarize.js");
+  const summarizerPath = join5(here, "summarize.js");
   const outFd = openSync(BG_LOG, "a");
   const child = spawn2(
     "node",
@@ -501,13 +533,7 @@ async function maybeTriggerSummarize(sid, transcript, threshold, contextWindow, 
   );
   child.unref();
   closeSync(outFd);
-  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
-}
-function envDisabled() {
-  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
-  if (!v) return false;
-  const lc = v.toLowerCase();
-  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
+  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window}, threshold=${(effectiveThreshold * 100).toFixed(0)}%)`);
 }
 async function main() {
   if (envDisabled()) {
@@ -523,25 +549,22 @@ async function main() {
   }
   const sid = input.session_id;
   const tp = input.transcript_path;
-  if (!sid || !tp) return;
+  if (!sid || !tp) {
+    log(`hook=Stop sid=${sid ?? "?"} no-session-or-transcript`);
+    return;
+  }
+  log(`hook=Stop sid=${sid} cch=${process.env.CCH_WRAPPER === "1" ? "1" : "0"}`);
   const cfg = loadConfig();
   if (!cfg.enabled) {
     log(`heartbeat sid=${sid} disabled`);
     return;
   }
-  const spliced = await applyPending(sid, tp);
-  if (spliced && process.env.CCH_WRAPPER === "1") {
-    try {
-      process.kill(process.ppid, "SIGHUP");
-      log(`sent SIGHUP to cc (pid=${process.ppid}) for cch auto-reload`);
-    } catch (err) {
-      log(`SIGHUP to cc failed: ${String(err)}`);
-    }
-  }
+  await spliceAndReload("Stop", sid, tp);
   await maybeTriggerSummarize(
     sid,
     tp,
     cfg.threshold,
+    cfg.windowThresholds,
     cfg.contextWindow,
     cfg.modelWindows
   );

@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 export interface CompactConfig {
   enabled: boolean;
   threshold: number;
+  windowThresholds: Record<string, number>;
   modelOverride: string | null;
   contextWindow: number | null;
   modelWindows: Record<string, number>;
@@ -15,6 +16,7 @@ export interface CompactConfig {
 const DEFAULTS: CompactConfig = {
   enabled: true,
   threshold: 0.7,
+  windowThresholds: {},
   modelOverride: null,
   contextWindow: null,
   modelWindows: {},

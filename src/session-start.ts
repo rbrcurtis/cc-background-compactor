@@ -1,4 +1,5 @@
 import { saveSessionModel } from "./session-model.ts";
+import { log, readStdin, envDisabled } from "./hooks-shared.ts";
 
 interface SessionStartInput {
   session_id?: string;
@@ -6,25 +7,6 @@ interface SessionStartInput {
   model?: string;
   hook_event_name?: string;
   cwd?: string;
-}
-
-async function readStdin(): Promise<string> {
-  return new Promise((resolve) => {
-    let buf = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      buf += chunk;
-    });
-    process.stdin.on("end", () => resolve(buf));
-    process.stdin.on("error", () => resolve(buf));
-  });
-}
-
-function envDisabled(): boolean {
-  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
-  if (!v) return false;
-  const lc = v.toLowerCase();
-  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
 }
 
 async function main() {
@@ -42,6 +24,7 @@ async function main() {
   }
   const sid = input.session_id;
   const model = input.model;
+  log(`hook=SessionStart sid=${sid ?? "?"} source=${input.source ?? "?"} model=${model ?? "?"} cch=${process.env.CCH_WRAPPER === "1" ? "1" : "0"}`);
   if (!sid || !model) return;
 
   saveSessionModel({
@@ -53,5 +36,5 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`[cc-compact] session-start hook error: ${String(err)}\n`);
+  log(`session-start hook error: ${String(err)}`);
 });

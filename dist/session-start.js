@@ -21,7 +21,19 @@ function saveSessionModel(entry) {
   writeFileSync(p, JSON.stringify(entry));
 }
 
-// src/session-start.ts
+// src/hooks-shared.ts
+import { existsSync as existsSync2, appendFileSync } from "node:fs";
+var BG_LOG = "/tmp/cc-compact-bg.log";
+function log(line) {
+  const stamp = (/* @__PURE__ */ new Date()).toISOString();
+  try {
+    appendFileSync(BG_LOG, `${stamp} ${line}
+`);
+  } catch {
+  }
+  process.stderr.write(`[cc-compact] ${line}
+`);
+}
 async function readStdin() {
   return new Promise((resolve) => {
     let buf = "";
@@ -39,6 +51,8 @@ function envDisabled() {
   const lc = v.toLowerCase();
   return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
 }
+
+// src/session-start.ts
 async function main() {
   if (envDisabled()) {
     await readStdin();
@@ -53,6 +67,7 @@ async function main() {
   }
   const sid = input.session_id;
   const model = input.model;
+  log(`hook=SessionStart sid=${sid ?? "?"} source=${input.source ?? "?"} model=${model ?? "?"} cch=${process.env.CCH_WRAPPER === "1" ? "1" : "0"}`);
   if (!sid || !model) return;
   saveSessionModel({
     sessionId: sid,
@@ -62,6 +77,5 @@ async function main() {
   });
 }
 main().catch((err) => {
-  process.stderr.write(`[cc-compact] session-start hook error: ${String(err)}
-`);
+  log(`session-start hook error: ${String(err)}`);
 });

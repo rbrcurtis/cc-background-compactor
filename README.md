@@ -52,6 +52,7 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 {
   "enabled": true,
   "threshold": 0.7,
+  "windowThresholds": {},
   "modelOverride": null,
   "contextWindow": null,
   "modelWindows": {},
@@ -63,7 +64,8 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 | Field | Default | What it does |
 |-------|---------|--------------|
 | `enabled` | `true` | Kill switch. |
-| `threshold` | `0.7` | Fraction of context fill that triggers summarization (0.7 = 70%). |
+| `threshold` | `0.7` | Default fraction of context fill that triggers summarization (0.7 = 70%). |
+| `windowThresholds` | `{}` | Per-window threshold overrides keyed by exact window size, e.g. `{"1000000": 0.3, "200000": 0.7}`. Useful because long-context models often degrade earlier (e.g. 1M-window models may get noticeably worse past ~40%, so a lower threshold there is healthier). Falls back to `threshold` when no key matches. |
 | `modelOverride` | `null` | Pin a specific model for summarization. `null` = detect the parent session's model from the transcript and use the same one. |
 | `modelWindows` | `{}` | Explicit per-model window overrides, e.g. `{"claude-opus-4-7": 1000000}` if you always run opus on the 1M variant. The JSONL strips the `[1m]` suffix, so the probe can't tell 1M variants from 200k base models — declaring it here is the durable fix. Highest priority; beats the probed cache. |
 | `contextWindow` | `null` | Global fallback window in tokens for models not in `modelWindows` and not yet in the probed cache. `null` = auto-probe the model via `claude -p` and cache the result. |

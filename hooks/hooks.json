@@ -1,5 +1,5 @@
 {
-  "description": "Stop hook checks context fill from transcript JSONL, triggers background summarizer over threshold, splices pending summary on idle turn. SessionStart hook captures the resolved model identifier (including [1m] suffix) so the Stop hook can distinguish 1M from 200k variants, which the JSONL itself strips.",
+  "description": "Stop hook checks context fill from transcript JSONL, triggers background summarizer over threshold, splices pending summary on idle turn. UserPromptSubmit and PreCompact hooks splice any pending summary at turn start / before native compact, then SIGHUP the cch wrapper to reload with the freshly compacted JSONL. SessionStart hook captures the resolved model identifier (including [1m] suffix) so the Stop hook can distinguish 1M from 200k variants, which the JSONL itself strips.",
   "hooks": {
     "Stop": [
       {
@@ -17,6 +17,26 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/session-start.js"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/turn-start.js"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/dist/pre-compact.js"
           }
         ]
       }

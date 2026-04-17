@@ -1,65 +1,28 @@
-import { readFile, unlink } from "node:fs/promises";
-import { existsSync, openSync, closeSync, appendFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { existsSync, openSync, closeSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { applyCompaction, detectContextUsage } from "./jsonl.ts";
+import { detectContextUsage } from "./jsonl.ts";
 import { loadConfig } from "./config.ts";
 import { getCachedWindow, spawnProbeDetached } from "./window-cache.ts";
 import { loadSessionModel, readSettingsModel } from "./session-model.ts";
-
-const BG_LOG = "/tmp/cc-compact-bg.log";
-
-function log(line: string): void {
-  const stamp = new Date().toISOString();
-  try {
-    appendFileSync(BG_LOG, `${stamp} ${line}\n`);
-  } catch {
-    /* best-effort */
-  }
-  process.stderr.write(`[cc-compact] ${line}\n`);
-}
+import {
+  BG_LOG,
+  log,
+  readStdin,
+  envDisabled,
+  spliceAndReload,
+  summaryPath,
+  lockPath,
+} from "./hooks-shared.ts";
 
 interface StopHookInput {
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
   stop_hook_active?: boolean;
-}
-
-interface PreparedSummary {
-  sessionId: string;
-  transcriptPath: string;
-  summary: string;
-  lastOldLineIdx: number;
-  messagesBefore: number;
-  messagesCovered: number;
-  summaryChars: number;
-  excerptChars?: number;
-  prepareDurationMs: number;
-  timestamp: number;
-}
-
-function summaryPath(sid: string): string {
-  return join(tmpdir(), `cc-compact-summary-${sid}.json`);
-}
-
-function lockPath(sid: string): string {
-  return join(tmpdir(), `cc-compact-lock-${sid}`);
-}
-
-async function readStdin(): Promise<string> {
-  return new Promise((resolve) => {
-    let buf = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      buf += chunk;
-    });
-    process.stdin.on("end", () => resolve(buf));
-    process.stdin.on("error", () => resolve(buf));
-  });
 }
 
 async function isPidRunning(pid: number): Promise<boolean> {
@@ -69,54 +32,6 @@ async function isPidRunning(pid: number): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function applyPending(
-  sid: string,
-  currentTranscript: string,
-): Promise<boolean> {
-  const sp = summaryPath(sid);
-  if (!existsSync(sp)) return false;
-
-  let prepared: PreparedSummary;
-  try {
-    prepared = JSON.parse(await readFile(sp, "utf8")) as PreparedSummary;
-  } catch (err) {
-    log(`bad summary file, discarding: ${String(err)}`);
-    await unlink(sp).catch(() => {});
-    return false;
-  }
-
-  if (prepared.transcriptPath !== currentTranscript) {
-    log(`summary transcript mismatch, discarding`);
-    await unlink(sp).catch(() => {});
-    return false;
-  }
-
-  try {
-    const preTokens = prepared.excerptChars
-      ? Math.max(1, Math.round(prepared.excerptChars / 4))
-      : 0;
-    await applyCompaction({
-      sessionId: prepared.sessionId,
-      jsonlPath: prepared.transcriptPath,
-      summary: prepared.summary,
-      lastOldLineIdx: prepared.lastOldLineIdx,
-      preTokens,
-      durationMs: prepared.prepareDurationMs,
-      trigger: "background",
-    });
-    log(
-      `spliced: ${prepared.messagesCovered}/${prepared.messagesBefore} msgs, ${prepared.summaryChars} chars`,
-    );
-  } catch (err) {
-    log(`apply failed: ${String(err)}`);
-    await unlink(sp).catch(() => {});
-    return false;
-  }
-
-  await unlink(sp).catch(() => {});
-  return true;
 }
 
 function resolveSessionModel(sid: string): { model: string | null; origin: string } {
@@ -131,6 +46,7 @@ async function maybeTriggerSummarize(
   sid: string,
   transcript: string,
   threshold: number,
+  windowThresholds: Record<string, number>,
   contextWindow: number | null,
   modelWindows: Record<string, number>,
 ): Promise<void> {
@@ -147,9 +63,13 @@ async function maybeTriggerSummarize(
     return;
   }
 
+  const override = windowThresholds[String(usage.window)];
+  const effectiveThreshold = typeof override === "number" ? override : threshold;
+  const thresholdSource = typeof override === "number" ? "windowThresholds" : "default";
+
   const pct = (usage.fraction * 100).toFixed(1);
   log(
-    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(threshold * 100).toFixed(0)}%`,
+    `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(effectiveThreshold * 100).toFixed(0)}% (${thresholdSource})`,
   );
 
   // Only probe when we have no signal at all: no explicit override, no cache, no config fallback.
@@ -159,7 +79,7 @@ async function maybeTriggerSummarize(
     return;
   }
 
-  if (usage.fraction < threshold) return;
+  if (usage.fraction < effectiveThreshold) return;
 
   const lp = lockPath(sid);
   if (existsSync(lp)) {
@@ -196,14 +116,7 @@ async function maybeTriggerSummarize(
   child.unref();
   closeSync(outFd);
 
-  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window})`);
-}
-
-function envDisabled(): boolean {
-  const v = process.env.CC_BACKGROUND_COMPACTOR_DISABLE;
-  if (!v) return false;
-  const lc = v.toLowerCase();
-  return lc === "1" || lc === "true" || lc === "yes" || lc === "on";
+  log(`triggered background summarize at ${pct}% (${usage.tokens}/${usage.window}, threshold=${(effectiveThreshold * 100).toFixed(0)}%)`);
 }
 
 async function main() {
@@ -223,7 +136,12 @@ async function main() {
 
   const sid = input.session_id;
   const tp = input.transcript_path;
-  if (!sid || !tp) return;
+  if (!sid || !tp) {
+    log(`hook=Stop sid=${sid ?? "?"} no-session-or-transcript`);
+    return;
+  }
+
+  log(`hook=Stop sid=${sid} cch=${process.env.CCH_WRAPPER === "1" ? "1" : "0"}`);
 
   const cfg = loadConfig();
   if (!cfg.enabled) {
@@ -231,19 +149,12 @@ async function main() {
     return;
   }
 
-  const spliced = await applyPending(sid, tp);
-  if (spliced && process.env.CCH_WRAPPER === "1") {
-    try {
-      process.kill(process.ppid, "SIGHUP");
-      log(`sent SIGHUP to cc (pid=${process.ppid}) for cch auto-reload`);
-    } catch (err) {
-      log(`SIGHUP to cc failed: ${String(err)}`);
-    }
-  }
+  await spliceAndReload("Stop", sid, tp);
   await maybeTriggerSummarize(
     sid,
     tp,
     cfg.threshold,
+    cfg.windowThresholds,
     cfg.contextWindow,
     cfg.modelWindows,
   );

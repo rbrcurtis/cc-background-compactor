@@ -302,6 +302,7 @@ import { join, dirname } from "node:path";
 var DEFAULTS = {
   enabled: true,
   threshold: 0.7,
+  windowThresholds: {},
   modelOverride: null,
   contextWindow: null,
   modelWindows: {},
