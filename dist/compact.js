@@ -491,9 +491,21 @@ async function maybeTriggerSummarize(sid, transcript, threshold, windowThreshold
     log(`heartbeat sid=${sid} no-usage-yet sessionModel=${sessionModel ?? "?"} (${modelOrigin})`);
     return;
   }
-  const override = windowThresholds[String(usage.window)];
-  const effectiveThreshold = typeof override === "number" ? override : threshold;
-  const thresholdSource = typeof override === "number" ? "windowThresholds" : "default";
+  const envT = process.env.CC_BG_THRESHOLD;
+  const envThreshold = envT && !Number.isNaN(parseFloat(envT)) ? parseFloat(envT) : null;
+  const winOverride = windowThresholds[String(usage.window)];
+  let effectiveThreshold;
+  let thresholdSource;
+  if (envThreshold !== null) {
+    effectiveThreshold = envThreshold;
+    thresholdSource = "env";
+  } else if (typeof winOverride === "number") {
+    effectiveThreshold = winOverride;
+    thresholdSource = "windowThresholds";
+  } else {
+    effectiveThreshold = threshold;
+    thresholdSource = "default";
+  }
   const pct = (usage.fraction * 100).toFixed(1);
   log(
     `heartbeat sid=${sid} model=${usage.model ?? "?"} (${modelOrigin}) tokens=${usage.tokens} window=${usage.window} source=${usage.windowSource} fraction=${pct}% threshold=${(effectiveThreshold * 100).toFixed(0)}% (${thresholdSource})`

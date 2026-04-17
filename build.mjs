@@ -8,7 +8,6 @@ const entryPoints = [
   "src/summarize.ts",
   "src/probe-window.ts",
   "src/session-start.ts",
-  "src/turn-start.ts",
   "src/pre-compact.ts",
 ];
 

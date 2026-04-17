@@ -63,9 +63,23 @@ async function maybeTriggerSummarize(
     return;
   }
 
-  const override = windowThresholds[String(usage.window)];
-  const effectiveThreshold = typeof override === "number" ? override : threshold;
-  const thresholdSource = typeof override === "number" ? "windowThresholds" : "default";
+  // Resolution order: CC_BG_THRESHOLD env (per-process, e.g. orcd per-card)
+  // > windowThresholds[exact window] > config.threshold (default).
+  const envT = process.env.CC_BG_THRESHOLD;
+  const envThreshold = envT && !Number.isNaN(parseFloat(envT)) ? parseFloat(envT) : null;
+  const winOverride = windowThresholds[String(usage.window)];
+  let effectiveThreshold: number;
+  let thresholdSource: string;
+  if (envThreshold !== null) {
+    effectiveThreshold = envThreshold;
+    thresholdSource = "env";
+  } else if (typeof winOverride === "number") {
+    effectiveThreshold = winOverride;
+    thresholdSource = "windowThresholds";
+  } else {
+    effectiveThreshold = threshold;
+    thresholdSource = "default";
+  }
 
   const pct = (usage.fraction * 100).toFixed(1);
   log(

@@ -172,7 +172,7 @@ var require_arg = __commonJS({
 
 // src/summarize.ts
 var import_arg = __toESM(require_arg(), 1);
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, writeFile, unlink, rename } from "node:fs/promises";
 import { existsSync as existsSync2 } from "node:fs";
 import { spawn } from "node:child_process";
 import { join as join2 } from "node:path";
@@ -455,8 +455,10 @@ async function main() {
     if (!summary) {
       throw new Error("claude -p returned empty summary");
     }
+    const finalPath = summaryPath(sid);
+    const tmpPath = `${finalPath}.tmp.${process.pid}`;
     await writeFile(
-      summaryPath(sid),
+      tmpPath,
       JSON.stringify({
         sessionId: sid,
         transcriptPath: tp,
@@ -470,6 +472,7 @@ async function main() {
         timestamp: Date.now()
       })
     );
+    await rename(tmpPath, finalPath);
     process.stderr.write(
       `[cc-compact] summary ready: ${summary.length} chars in ${durMs}ms
 `

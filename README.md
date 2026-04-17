@@ -79,11 +79,13 @@ Edit `~/.config/cc-background-compactor/config.json` (created on first run if mi
 4. `contextWindow` config fallback
 5. Name heuristic on the effective model
 
-## Per-process disable
+## Per-process env vars
 
-Set `CC_BACKGROUND_COMPACTOR_DISABLE=1` in the environment of a Claude Code process to make both hooks (`Stop` and `SessionStart`) no-op for that process. Accepted truthy values: `1`, `true`, `yes`, `on`.
-
-Useful when you want the compactor globally installed but skipped for specific invocations — e.g., Agent SDK subprocesses spawned by another orchestrator that does its own compaction.
+| Var | Effect |
+|-----|--------|
+| `CC_BACKGROUND_COMPACTOR_DISABLE=1` | Disables all hooks for that CC process. Accepted truthy values: `1`, `true`, `yes`, `on`. |
+| `CC_BG_THRESHOLD=0.5` | Per-process threshold override (decimal 0–1). Trumps both `threshold` and `windowThresholds` from config when set. Useful when an orchestrator (e.g. orcd) wants per-card thresholds without writing global config. Heartbeat log shows `(env)` when this path fires. |
+| `CCH_WRAPPER=1` | Set automatically by the `cch` wrapper. Tells splice paths to send SIGHUP for in-process reload. Without it (e.g. Agent SDK), splice still lands on disk for the next subprocess to read on startup — no SIGHUP, no surprise kills. |
 
 ## Requirements
 

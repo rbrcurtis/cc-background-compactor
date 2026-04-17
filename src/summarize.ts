@@ -1,4 +1,4 @@
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, writeFile, unlink, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
@@ -174,8 +174,11 @@ async function main() {
       throw new Error("claude -p returned empty summary");
     }
 
+    // Atomic write: temp file + rename so hooks can never read a partial summary file.
+    const finalPath = summaryPath(sid);
+    const tmpPath = `${finalPath}.tmp.${process.pid}`;
     await writeFile(
-      summaryPath(sid),
+      tmpPath,
       JSON.stringify({
         sessionId: sid,
         transcriptPath: tp,
@@ -189,6 +192,7 @@ async function main() {
         timestamp: Date.now(),
       }),
     );
+    await rename(tmpPath, finalPath);
 
     process.stderr.write(
       `[cc-compact] summary ready: ${summary.length} chars in ${durMs}ms\n`,
