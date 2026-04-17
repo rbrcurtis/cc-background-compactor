@@ -233,13 +233,16 @@ function parseLines(lines) {
     if (!text.trim()) continue;
     const blocks = Array.isArray(content) ? content : [];
     const isToolResult = blocks.some((b) => b.type === "tool_result");
-    const isToolUse = blocks.some((b) => b.type === "tool_use");
+    const stopReason = typeof message.stop_reason === "string" ? message.stop_reason : null;
+    const isToolUse = blocks.some((b) => b.type === "tool_use") || stopReason === "tool_use";
+    const messageId = typeof message.id === "string" ? message.id : null;
     messages.push({
       lineIndex: i,
       role,
       text,
       isToolResult,
-      isToolUse
+      isToolUse,
+      messageId
     });
   }
   return { lastBoundaryLine, messages };
@@ -268,7 +271,8 @@ function computeCutoff(messages, ratio) {
   while (cutoff > 2) {
     const firstKept = messages[cutoff];
     const lastSummarized = messages[cutoff - 1];
-    if (firstKept.isToolResult || lastSummarized.isToolUse) {
+    const splitsFragmentGroup = lastSummarized.messageId !== null && lastSummarized.messageId === firstKept.messageId;
+    if (firstKept.isToolResult || lastSummarized.isToolUse || splitsFragmentGroup) {
       cutoff--;
     } else {
       break;

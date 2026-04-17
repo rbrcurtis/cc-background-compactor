@@ -7,6 +7,8 @@ export interface IndexedMessage {
   text: string;
   isToolResult: boolean;
   isToolUse: boolean;
+  /** API message.id — shared across split-stream fragments of one response. */
+  messageId: string | null;
 }
 
 export function extractText(content: unknown): string {
@@ -80,7 +82,13 @@ export function parseLines(lines: string[]): {
       ? (content as Array<Record<string, unknown>>)
       : [];
     const isToolResult = blocks.some((b) => b.type === "tool_result");
-    const isToolUse = blocks.some((b) => b.type === "tool_use");
+    // stop_reason=tool_use means the turn expects a tool call even if this
+    // JSONL entry doesn't carry the tool_use block — CC's streaming writer
+    // sometimes splits one API response into multiple JSONL lines.
+    const stopReason = typeof message.stop_reason === "string" ? message.stop_reason : null;
+    const isToolUse =
+      blocks.some((b) => b.type === "tool_use") || stopReason === "tool_use";
+    const messageId = typeof message.id === "string" ? message.id : null;
 
     messages.push({
       lineIndex: i,
@@ -88,6 +96,7 @@ export function parseLines(lines: string[]): {
       text,
       isToolResult,
       isToolUse,
+      messageId,
     });
   }
 
@@ -127,7 +136,12 @@ export function computeCutoff(
   while (cutoff > 2) {
     const firstKept = messages[cutoff];
     const lastSummarized = messages[cutoff - 1];
-    if (firstKept.isToolResult || lastSummarized.isToolUse) {
+    // Same messageId across the boundary means we're splitting fragments
+    // of one API response — must keep them together.
+    const splitsFragmentGroup =
+      lastSummarized.messageId !== null &&
+      lastSummarized.messageId === firstKept.messageId;
+    if (firstKept.isToolResult || lastSummarized.isToolUse || splitsFragmentGroup) {
       cutoff--;
     } else {
       break;
