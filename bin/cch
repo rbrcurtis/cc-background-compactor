@@ -2,8 +2,8 @@
 # cch — claude wrapper that auto-resumes on SIGHUP.
 #
 # Runs `claude` in a loop. Normal exits propagate. Exit code 129 (sent by CC's
-# SIGHUP handler) triggers a reload: we re-exec with `--continue` so the
-# session reopens against the freshly-compacted JSONL.
+# SIGHUP handler) triggers a reload: we re-exec with `--continue` plus the
+# initial launch flags that must survive reload (for example `--model`).
 #
 # The cc-background-compactor Stop hook sends SIGHUP to CC after successfully
 # splicing a pending summary, but only when CCH_WRAPPER=1 is set — so plain
@@ -11,13 +11,36 @@
 set -u
 
 args=("$@")
+reload_flags=()
+
+for ((i = 0; i < ${#args[@]}; i++)); do
+  token=${args[i]}
+  case "$token" in
+    --dangerously-skip-permissions)
+      reload_flags+=("$token")
+      ;;
+    --model|-m)
+      reload_flags+=("$token")
+      if (( i + 1 < ${#args[@]} )); then
+        ((i += 1))
+        reload_flags+=("${args[i]}")
+      fi
+      ;;
+    --model=*)
+      reload_flags+=("$token")
+      ;;
+  esac
+done
 
 while true; do
-  CCH_WRAPPER=1 claude "${args[@]}"
-  code=$?
+  if CCH_WRAPPER=1 claude "${args[@]}"; then
+    code=0
+  else
+    code=$?
+  fi
   if [ "$code" -ne 129 ]; then
     exit "$code"
   fi
   printf '\033[2m↻ reloading session…\033[0m\n' >&2
-  args=(--continue)
+  args=(--continue "${reload_flags[@]}")
 done
